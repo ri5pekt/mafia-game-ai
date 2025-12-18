@@ -128,10 +128,10 @@ const props = defineProps<{
 
 .roleTag {
   position: absolute;
-  right: -8px;
-  bottom: -8px;
-  width: 26px;
-  height: 26px;
+  right: 0px;
+  bottom: 0px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
   display: grid;
   place-items: center;
@@ -154,18 +154,12 @@ const props = defineProps<{
   opacity: 0.95;
 }
 
-.avatar.isHost .roleTag {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  right: -10px;
-  bottom: -10px;
+.roleTag.mafia .roleIcon {
+  width: 19px;
+  height: 19px;
 }
 
-.avatar.isHost .roleIcon {
-  width: 18px;
-  height: 18px;
-}
+/* Host does not display a role badge. */
 </style>
 
 

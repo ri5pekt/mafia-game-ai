@@ -6,6 +6,9 @@
 
     <main class="main">
       <section class="tableShell">
+        <div class="phaseHud">
+          <PhaseIndicator :phase="uiPhase" />
+        </div>
         <div class="tableContainer">
           <div class="tableFallback" aria-hidden="true" />
           <img
@@ -75,6 +78,7 @@
 
 <script setup lang="ts">
 import ChatPanel from '@/components/ChatPanel.vue';
+import PhaseIndicator, { type UiPhase } from '@/components/PhaseIndicator.vue';
 import PlayerAvatar from '@/components/PlayerAvatar.vue';
 import { computed, ref } from 'vue';
 
@@ -89,6 +93,7 @@ type CoordMap = Record<string, Coord>;
 
 const gameBgUrl = gameTableUrl;
 const bgOk = ref(true);
+const uiPhase = ref<UiPhase>('DAY');
 
 // Captured seat coordinates (percent-based) provided by you.
 // Note: keys p1..p10 represent SEAT positions (not player identities).
@@ -134,7 +139,7 @@ type Person = {
   nickname: string;
   avatarUrl: string;
   roleId: RoleId;
-  roleTag: RoleTag;
+  roleTag?: RoleTag;
 };
 
 type Seat = {
@@ -209,8 +214,7 @@ const hostSeat = computed(() => {
     name: hostPreset.name,
     nickname: hostPreset.nickname,
     avatarUrl: getPlayerAvatarUrl(hostPreset.avatar),
-    roleId: 'TOWN',
-    roleTag: { iconUrl: ROLE_ICON_URL.TOWN, label: 'HOST', tone: 'town' }
+    roleId: 'TOWN'
   };
   return { top: pos.top, left: pos.left, zIndex: Math.round(topNumber * 10) + 50, person };
 });
@@ -281,6 +285,14 @@ const chatMessages = computed<ChatMessage[]>(() => {
 .tableShell {
   width: min(1100px, 100%);
   position: relative;
+}
+
+.phaseHud {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
 }
 
 .tableContainer {
