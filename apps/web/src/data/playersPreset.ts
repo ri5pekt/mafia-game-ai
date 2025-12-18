@@ -1,12 +1,21 @@
 export type PlayerPreset = {
   id: string;
-  gender: "female" | "male";
+  role?: "host";
+  gender: "female" | "male" | "neutral";
   name: string;
   nickname: string;
   avatar: string; // filename under src/assets/images/players/
 };
 
 export const PLAYERS_PRESET: PlayerPreset[] = [
+  {
+    id: "host",
+    role: "host",
+    gender: "neutral",
+    name: "Alex Morgan",
+    nickname: "The Moderator",
+    avatar: "host.png",
+  },
   {
     id: "p1",
     gender: "female",

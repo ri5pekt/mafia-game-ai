@@ -28,8 +28,10 @@
           />
 
           <PlayerAvatar
-            initials="HOST"
-            name="HOST"
+            :initials="host.initials"
+            :name="host.name"
+            :nickname="host.nickname"
+            :avatar-url="host.avatarUrl"
             :top="host.top"
             :left="host.left"
             is-host
@@ -75,6 +77,7 @@ const POSITION_BY_ID: Record<string, Pick<PlayerViewModel, 'top' | 'left'>> = {
 };
 
 const players: PlayerViewModel[] = PLAYERS_PRESET.map((p) => {
+  if (p.id === 'host') return null;
   const pos = POSITION_BY_ID[p.id];
   return {
     id: p.id,
@@ -85,9 +88,19 @@ const players: PlayerViewModel[] = PLAYERS_PRESET.map((p) => {
     top: pos?.top ?? '50%',
     left: pos?.left ?? '50%'
   };
-});
+}).filter((x): x is PlayerViewModel => x !== null);
 
-const host = { top: '90%', left: '50%' };
+const hostPreset = PLAYERS_PRESET.find((p) => p.id === 'host');
+
+const host: PlayerViewModel = {
+  id: 'host',
+  initials: 'HOST',
+  name: hostPreset?.name ?? 'HOST',
+  nickname: hostPreset?.nickname ?? 'The Moderator',
+  avatarUrl: getPlayerAvatarUrl(hostPreset?.avatar ?? 'host.png'),
+  top: '90%',
+  left: '50%'
+};
 </script>
 
 <style scoped>
