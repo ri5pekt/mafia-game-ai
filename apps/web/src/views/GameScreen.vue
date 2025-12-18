@@ -21,6 +21,8 @@
             :key="p.id"
             :initials="p.initials"
             :name="p.name"
+            :nickname="p.nickname"
+            :avatar-url="p.avatarUrl"
             :top="p.top"
             :left="p.left"
           />
@@ -44,11 +46,14 @@ import PlayerAvatar from '@/components/PlayerAvatar.vue';
 import { ref } from 'vue';
 
 import gameTableUrl from '@/assets/images/game-table.png';
+import { getPlayerAvatarUrl, PLAYERS_PRESET } from '@/data/playersPreset';
 
 type PlayerViewModel = {
   id: string;
   initials: string;
   name: string;
+  nickname: string;
+  avatarUrl: string;
   top: string;
   left: string;
 };
@@ -56,18 +61,31 @@ type PlayerViewModel = {
 const gameBgUrl = gameTableUrl;
 const bgOk = ref(true);
 
-const players: PlayerViewModel[] = [
-  { id: 'P1', initials: 'P1', name: 'Player 1', top: '12%', left: '50%' },
-  { id: 'P2', initials: 'P2', name: 'Player 2', top: '18%', left: '70%' },
-  { id: 'P3', initials: 'P3', name: 'Player 3', top: '35%', left: '82%' },
-  { id: 'P4', initials: 'P4', name: 'Player 4', top: '55%', left: '82%' },
-  { id: 'P5', initials: 'P5', name: 'Player 5', top: '72%', left: '70%' },
-  { id: 'P6', initials: 'P6', name: 'Player 6', top: '78%', left: '50%' },
-  { id: 'P7', initials: 'P7', name: 'Player 7', top: '72%', left: '30%' },
-  { id: 'P8', initials: 'P8', name: 'Player 8', top: '55%', left: '18%' },
-  { id: 'P9', initials: 'P9', name: 'Player 9', top: '35%', left: '18%' },
-  { id: 'P10', initials: 'P10', name: 'Player 10', top: '18%', left: '30%' }
-];
+const POSITION_BY_ID: Record<string, Pick<PlayerViewModel, 'top' | 'left'>> = {
+  p1: { top: '12%', left: '50%' },
+  p2: { top: '18%', left: '70%' },
+  p3: { top: '35%', left: '82%' },
+  p4: { top: '55%', left: '82%' },
+  p5: { top: '72%', left: '70%' },
+  p6: { top: '78%', left: '50%' },
+  p7: { top: '72%', left: '30%' },
+  p8: { top: '55%', left: '18%' },
+  p9: { top: '35%', left: '18%' },
+  p10: { top: '18%', left: '30%' }
+};
+
+const players: PlayerViewModel[] = PLAYERS_PRESET.map((p) => {
+  const pos = POSITION_BY_ID[p.id];
+  return {
+    id: p.id,
+    initials: p.id.toUpperCase(),
+    name: p.name,
+    nickname: p.nickname,
+    avatarUrl: getPlayerAvatarUrl(p.avatar),
+    top: pos?.top ?? '50%',
+    left: pos?.left ?? '50%'
+  };
+});
 
 const host = { top: '90%', left: '50%' };
 </script>

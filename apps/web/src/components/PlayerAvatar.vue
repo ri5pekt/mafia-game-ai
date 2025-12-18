@@ -1,9 +1,20 @@
 <template>
   <div class="avatar" :class="{ isHost }" :style="style">
     <div class="circle">
-      <span class="initials">{{ initials }}</span>
+      <img
+        v-if="avatarUrl"
+        class="photo"
+        :src="avatarUrl"
+        :alt="`${name} avatar`"
+        loading="lazy"
+        decoding="async"
+      />
+      <span v-else class="initials">{{ initials }}</span>
     </div>
-    <div class="label">{{ name }}</div>
+    <div class="label">
+      <div class="name">{{ name }}</div>
+      <div v-if="nickname" class="nick">{{ nickname }}</div>
+    </div>
   </div>
 </template>
 
@@ -13,6 +24,8 @@ import { computed } from 'vue';
 const props = defineProps<{
   initials: string;
   name: string;
+  nickname?: string;
+  avatarUrl?: string;
   top: string;
   left: string;
   isHost?: boolean;
@@ -43,6 +56,14 @@ const style = computed(() => ({
   border: 1px solid rgba(255, 255, 255, 0.22);
   backdrop-filter: blur(10px);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: translateZ(0);
 }
 
 .initials {
@@ -54,12 +75,26 @@ const style = computed(() => ({
 
 .label {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.78);
+  color: rgba(255, 255, 255, 0.90);
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.12);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 10px;
   white-space: nowrap;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+.name {
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.nick {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.70);
+  line-height: 1.1;
 }
 
 .avatar.isHost .circle {
