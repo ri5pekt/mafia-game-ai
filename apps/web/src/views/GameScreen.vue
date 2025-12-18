@@ -69,7 +69,8 @@ const POSITION_BY_ID: Record<string, Pick<PlayerViewModel, 'top' | 'left'>> = {
   p3: { top: '35%', left: '82%' },
   p4: { top: '55%', left: '82%' },
   p5: { top: '72%', left: '70%' },
-  p6: { top: '78%', left: '50%' },
+  // Keep space for the host at bottom-center; seat this player to the host's left.
+  p6: { top: '76%', left: '42%' },
   p7: { top: '72%', left: '30%' },
   p8: { top: '55%', left: '18%' },
   p9: { top: '35%', left: '18%' },
