@@ -16,6 +16,17 @@
             @error="bgOk = false"
           />
 
+          <!-- Seat/Player number markers (environment overlay; NOT part of avatars) -->
+          <div
+            v-for="p in players"
+            :key="`${p.id}-tag`"
+            class="seatTag"
+            :style="{ top: p.top, left: p.left, zIndex: p.zIndex - 1 }"
+            :title="`Seat ${p.seatIndex}: ${p.id.toUpperCase()}`"
+          >
+            {{ p.tableNumber }}
+          </div>
+
           <PlayerAvatar
             v-for="p in players"
             :key="p.id"
@@ -25,6 +36,7 @@
             :avatar-url="p.avatarUrl"
             :top="p.top"
             :left="p.left"
+            :z-index="p.zIndex"
           />
 
           <PlayerAvatar
@@ -34,6 +46,7 @@
             :avatar-url="host.avatarUrl"
             :top="host.top"
             :left="host.left"
+            :z-index="host.zIndex"
             is-host
           />
         </div>
@@ -58,6 +71,9 @@ type PlayerViewModel = {
   avatarUrl: string;
   top: string;
   left: string;
+  zIndex: number;
+  seatIndex: number;
+  tableNumber: number;
 };
 
 const gameBgUrl = gameTableUrl;
@@ -96,6 +112,8 @@ const seatModels: PlayerViewModel[] = [...PLAYERS_PRESET]
   .sort((a, b) => seatSortKey(a.id) - seatSortKey(b.id))
   .map((p, idx) => {
     const pos = seatPosition(idx, seatCount);
+    const topNumber = Number.parseFloat(pos.top);
+    const tableNumber = p.id === 'host' ? 0 : Number.parseInt(p.id.replace('p', ''), 10);
     return {
       id: p.id,
       initials: p.id === 'host' ? 'HOST' : p.id.toUpperCase(),
@@ -103,12 +121,18 @@ const seatModels: PlayerViewModel[] = [...PLAYERS_PRESET]
       nickname: p.nickname,
       avatarUrl: getPlayerAvatarUrl(p.avatar),
       top: pos.top,
-      left: pos.left
+      left: pos.left,
+      // Stacking: lower on screen should render above higher (prevents "back row" covering "front row")
+      zIndex: Math.round(topNumber * 10),
+      seatIndex: idx,
+      tableNumber: Number.isFinite(tableNumber) ? tableNumber : idx
     };
   });
 
 const host = seatModels.find((p) => p.id === 'host')!;
-const players = seatModels.filter((p) => p.id !== 'host');
+// Keep DOM order stable by player number for debugging/inspection (p1..p10),
+// while z-index controls visual stacking.
+const players = seatModels.filter((p) => p.id !== 'host').sort((a, b) => seatSortKey(a.id) - seatSortKey(b.id));
 </script>
 
 <style scoped>
@@ -167,6 +191,25 @@ const players = seatModels.filter((p) => p.id !== 'host');
   user-select: none;
   pointer-events: none;
   filter: drop-shadow(0 16px 40px rgba(0, 0, 0, 0.55));
+}
+
+.seatTag {
+  position: absolute;
+  transform: translate(-50%, -50%) translate(0, -78px);
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  pointer-events: none;
 }
 </style>
 
