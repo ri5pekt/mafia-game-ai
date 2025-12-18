@@ -321,4 +321,14 @@ pnpm dev:web
 - **Backend is optional for first run**; the UI renders even if API/worker are offline.
 - **No gameplay/AI/OpenAI logic is implemented** in this scaffold.
 
+---
+
+## Dev workflow note (Dockerized backend)
+
+Recommended dev workflow:
+
+- Run **Postgres + Redis + API + Worker** in Docker Compose
+- Run **Vue (Vite) locally** for fast HMR
+
+
 

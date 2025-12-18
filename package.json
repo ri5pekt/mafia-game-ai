@@ -1,13 +1,11 @@
 {
-  "name": "mafia-game-ai",
-  "private": true,
-  "packageManager": "pnpm@9.15.0",
-  "scripts": {
-    "dev:web": "pnpm -C apps/web dev",
-    "dev:api": "pnpm -C apps/api start:dev",
-    "dev:worker": "pnpm -C apps/worker dev",
-    "dev:infra": "docker compose -p mafia-game-ai -f docker/docker-compose.yml up -d"
-  }
+    "name": "mafia-game-ai",
+    "private": true,
+    "packageManager": "pnpm@9.15.0",
+    "scripts": {
+        "dev:web": "pnpm -C apps/web dev",
+        "dev:api": "pnpm -C apps/api start:dev",
+        "dev:worker": "pnpm -C apps/worker dev",
+        "dev:infra": "docker compose -p mafia-game-ai -f docker/docker-compose.yml up -d"
+    }
 }
-
-
