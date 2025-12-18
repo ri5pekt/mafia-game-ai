@@ -63,45 +63,52 @@ type PlayerViewModel = {
 const gameBgUrl = gameTableUrl;
 const bgOk = ref(true);
 
-const POSITION_BY_ID: Record<string, Pick<PlayerViewModel, 'top' | 'left'>> = {
-  p1: { top: '12%', left: '50%' },
-  p2: { top: '18%', left: '70%' },
-  p3: { top: '35%', left: '82%' },
-  p4: { top: '55%', left: '82%' },
-  p5: { top: '72%', left: '70%' },
-  // Keep space for the host at bottom-center; seat this player to the host's left.
-  p6: { top: '76%', left: '42%' },
-  p7: { top: '72%', left: '30%' },
-  p8: { top: '55%', left: '18%' },
-  p9: { top: '35%', left: '18%' },
-  p10: { top: '18%', left: '30%' }
-};
+function seatSortKey(id: string): number {
+  if (id === 'host') return 0;
+  const m = id.match(/^p(\d+)$/);
+  if (!m) return 999;
+  return Number(m[1]);
+}
 
-const players: PlayerViewModel[] = PLAYERS_PRESET.map((p) => {
-  if (p.id === 'host') return null;
-  const pos = POSITION_BY_ID[p.id];
-  return {
-    id: p.id,
-    initials: p.id.toUpperCase(),
-    name: p.name,
-    nickname: p.nickname,
-    avatarUrl: getPlayerAvatarUrl(p.avatar),
-    top: pos?.top ?? '50%',
-    left: pos?.left ?? '50%'
-  };
-}).filter((x): x is PlayerViewModel => x !== null);
+// Equal spacing: 11 seats (10 players + host) distributed evenly around the table.
+// We approximate the table as an ellipse inside the 16:9 container.
+function seatPosition(seatIndex: number, seatCount: number): { top: string; left: string } {
+  const step = (2 * Math.PI) / seatCount;
+  const baseAngle = Math.PI / 2; // seat 0 at bottom-center
+  const angle = baseAngle - seatIndex * step; // clockwise
 
-const hostPreset = PLAYERS_PRESET.find((p) => p.id === 'host');
+  // Tunables (in % of container)
+  const centerX = 50;
+  const centerY = 50;
+  const radiusX = 42;
+  const radiusY = 36;
 
-const host: PlayerViewModel = {
-  id: 'host',
-  initials: 'HOST',
-  name: hostPreset?.name ?? 'HOST',
-  nickname: hostPreset?.nickname ?? 'The Moderator',
-  avatarUrl: getPlayerAvatarUrl(hostPreset?.avatar ?? 'host.png'),
-  top: '90%',
-  left: '50%'
-};
+  const left = centerX + radiusX * Math.cos(angle);
+  const top = centerY + radiusY * Math.sin(angle);
+
+  return { left: `${left}%`, top: `${top}%` };
+}
+
+const seatCount = 11;
+
+const seatModels: PlayerViewModel[] = [...PLAYERS_PRESET]
+  .slice()
+  .sort((a, b) => seatSortKey(a.id) - seatSortKey(b.id))
+  .map((p, idx) => {
+    const pos = seatPosition(idx, seatCount);
+    return {
+      id: p.id,
+      initials: p.id === 'host' ? 'HOST' : p.id.toUpperCase(),
+      name: p.name,
+      nickname: p.nickname,
+      avatarUrl: getPlayerAvatarUrl(p.avatar),
+      top: pos.top,
+      left: pos.left
+    };
+  });
+
+const host = seatModels.find((p) => p.id === 'host')!;
+const players = seatModels.filter((p) => p.id !== 'host');
 </script>
 
 <style scoped>
