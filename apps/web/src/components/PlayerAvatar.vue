@@ -47,8 +47,8 @@ const style = computed(() => ({
 }
 
 .circle {
-  width: 72px;
-  height: 72px;
+  width: 100px;
+  height: 100px;
   border-radius: 999px;
   display: grid;
   place-items: center;
@@ -70,11 +70,11 @@ const style = computed(() => ({
   font-weight: 700;
   color: rgba(255, 255, 255, 0.92);
   letter-spacing: 0.2px;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .label {
-  font-size: 13px;
+  font-size: 14px;
   color: rgba(255, 255, 255, 0.90);
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -92,20 +92,20 @@ const style = computed(() => ({
 }
 
 .nick {
-  font-size: 12px;
+  font-size: 13px;
   color: rgba(255, 255, 255, 0.70);
   line-height: 1.1;
 }
 
 .avatar.isHost .circle {
-  width: 96px;
-  height: 96px;
+  width: 132px;
+  height: 132px;
   background: rgba(255, 255, 255, 0.16);
   border-color: rgba(255, 255, 255, 0.28);
 }
 
 .avatar.isHost .initials {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .avatar.isHost .label {

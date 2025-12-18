@@ -80,8 +80,8 @@ function seatPosition(seatIndex: number, seatCount: number): { top: string; left
   // Tunables (in % of container)
   const centerX = 50;
   const centerY = 50;
-  const radiusX = 42;
-  const radiusY = 36;
+  const radiusX = 46;
+  const radiusY = 38;
 
   const left = centerX + radiusX * Math.cos(angle);
   const top = centerY + radiusY * Math.sin(angle);
