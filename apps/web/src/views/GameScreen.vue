@@ -1,7 +1,7 @@
 <template>
   <div class="layout">
     <aside class="sidebar">
-      <ChatPanel />
+      <ChatPanel :messages="chatMessages" />
     </aside>
 
     <main class="main">
@@ -82,6 +82,7 @@ import gameTableUrl from '@/assets/images/game-table.png';
 import { getPlayerAvatarUrl, PLAYERS_PRESET } from '@/data/playersPreset';
 import type { RoleId } from '@shared/rules';
 import { ROLES } from '@shared/rules';
+import type { ChatMessage } from '@/types/chat';
 
 type Coord = { top: string; left: string };
 type CoordMap = Record<string, Coord>;
@@ -212,6 +213,44 @@ const hostSeat = computed(() => {
     roleTag: { iconUrl: ROLE_ICON_URL.TOWN, label: 'HOST', tone: 'town' }
   };
   return { top: pos.top, left: pos.left, zIndex: Math.round(topNumber * 10) + 50, person };
+});
+
+function formatSeatLine(s: Seat): string {
+  return `#${s.seatNumber}: ${s.person.name} (${s.person.nickname})`;
+}
+
+const chatMessages = computed<ChatMessage[]>(() => {
+  const seatLines = seats.value.map(formatSeatLine);
+  return [
+    {
+      id: 'sys-0',
+      kind: 'system',
+      sender: 'SYSTEM',
+      time: '00:00',
+      text: 'Random seats selected. Please have a seat.'
+    },
+    {
+      id: 'sys-1',
+      kind: 'system',
+      sender: 'SYSTEM',
+      time: '00:01',
+      text: seatLines.join('\n')
+    },
+    {
+      id: 'sys-2',
+      kind: 'system',
+      sender: 'SYSTEM',
+      time: '00:02',
+      text: "Random roles assigned. Don't tell anyone!"
+    },
+    {
+      id: 'host-0',
+      kind: 'host',
+      sender: 'HOST',
+      time: '00:03',
+      text: 'Welcome to the table. Be civil, be clever, and have a nice game.'
+    }
+  ];
 });
 </script>
 

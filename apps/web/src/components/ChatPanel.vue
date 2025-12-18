@@ -4,7 +4,7 @@
     <template #content>
       <ScrollPanel class="scroll">
         <div class="messages">
-          <div v-for="m in messages" :key="m.id" class="message">
+          <div v-for="m in resolvedMessages" :key="m.id" class="message">
             <div class="meta">
               <span class="sender" :class="m.kind">{{ m.sender }}</span>
               <span class="dot">•</span>
@@ -26,27 +26,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from "vue";
+import type { ChatMessage } from "@/types/chat";
 
-type MessageKind = 'host' | 'player' | 'system';
-
-type Message = {
-  id: string;
-  kind: MessageKind;
-  sender: string;
-  time: string;
-  text: string;
-};
+const props = defineProps<{
+  messages?: ChatMessage[];
+}>();
 
 const draft = ref('');
 
-const messages = ref<Message[]>([
-  { id: 'm1', kind: 'system', sender: 'SYSTEM', time: '00:00', text: 'Lobby created.' },
-  { id: 'm2', kind: 'host', sender: 'HOST', time: '00:01', text: 'Welcome. AI players will join soon.' },
-  { id: 'm3', kind: 'player', sender: 'P3', time: '00:02', text: 'Hello everyone.' },
-  { id: 'm4', kind: 'player', sender: 'P7', time: '00:03', text: 'Ready when you are.' },
-  { id: 'm5', kind: 'system', sender: 'SYSTEM', time: '00:04', text: 'Game phase: DAY (placeholder).' }
+const fallbackMessages = ref<ChatMessage[]>([
+  { id: "m1", kind: "system", sender: "SYSTEM", time: "00:00", text: "Lobby created." },
+  { id: "m2", kind: "host", sender: "HOST", time: "00:01", text: "Welcome. AI players will join soon." },
+  { id: "m3", kind: "system", sender: "SYSTEM", time: "00:02", text: "Press Start Game to begin." },
 ]);
+
+const resolvedMessages = computed(() => props.messages ?? fallbackMessages.value);
 </script>
 
 <style scoped>
@@ -134,6 +129,7 @@ const messages = ref<Message[]>([
   font-size: 13px;
   color: rgba(255, 255, 255, 0.88);
   line-height: 1.35;
+  white-space: pre-line;
 }
 
 .composer {
