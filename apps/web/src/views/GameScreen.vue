@@ -103,6 +103,7 @@ import PlayerAvatar from '@/components/PlayerAvatar.vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import gameTableUrl from '@/assets/images/game-table.png';
+import { DEFAULT_LAYOUT_PRESET } from '@/data/layoutPreset';
 import { getPlayerAvatarUrl, PLAYERS_PRESET } from '@/data/playersPreset';
 
 type PlayerViewModel = {
@@ -127,8 +128,12 @@ type CoordMap = Record<string, Coord>;
 
 const LAYOUT_STORAGE_KEY = 'mafia.layout.v1';
 
-const avatarPositions = ref<CoordMap>({});
-const tagPositions = ref<CoordMap>({});
+function cloneCoords<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T;
+}
+
+const avatarPositions = ref<CoordMap>(cloneCoords(DEFAULT_LAYOUT_PRESET.avatarPositions));
+const tagPositions = ref<CoordMap>(cloneCoords(DEFAULT_LAYOUT_PRESET.tagPositions));
 
 type DragKind = 'avatar' | 'tag';
 type DragTarget = { kind: DragKind; id: string };
@@ -200,14 +205,19 @@ const host = seatModels.find((p) => p.id === 'host')!;
 const players = seatModels.filter((p) => p.id !== 'host').sort((a, b) => seatSortKey(a.id) - seatSortKey(b.id));
 
 const defaultAvatarPositions = computed<CoordMap>(() => {
+  // Use captured preset as canonical default (falls back to computed if missing).
   const map: CoordMap = {};
-  for (const p of seatModels) map[p.id] = { top: p.top, left: p.left };
+  for (const p of seatModels) {
+    map[p.id] = DEFAULT_LAYOUT_PRESET.avatarPositions[p.id] ?? { top: p.top, left: p.left };
+  }
   return map;
 });
 
 const defaultTagPositions = computed<CoordMap>(() => {
   const map: CoordMap = {};
-  for (const p of players) map[p.id] = { top: p.top, left: p.left };
+  for (const p of players) {
+    map[p.id] = DEFAULT_LAYOUT_PRESET.tagPositions[p.id] ?? { top: p.top, left: p.left };
+  }
   return map;
 });
 
@@ -293,14 +303,18 @@ function persistCoords() {
 
 function loadCoords() {
   const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
-  if (!raw) return;
+  if (!raw) {
+    avatarPositions.value = cloneCoords(defaultAvatarPositions.value);
+    tagPositions.value = cloneCoords(defaultTagPositions.value);
+    return;
+  }
   try {
     const parsed = JSON.parse(raw) as {
       avatarPositions?: CoordMap;
       tagPositions?: CoordMap;
     };
-    avatarPositions.value = parsed.avatarPositions ?? {};
-    tagPositions.value = parsed.tagPositions ?? {};
+    avatarPositions.value = parsed.avatarPositions ?? cloneCoords(defaultAvatarPositions.value);
+    tagPositions.value = parsed.tagPositions ?? cloneCoords(defaultTagPositions.value);
   } catch {
     // ignore
   }
@@ -318,8 +332,8 @@ async function copyCoords() {
 }
 
 function resetCoords() {
-  avatarPositions.value = { ...defaultAvatarPositions.value };
-  tagPositions.value = { ...defaultTagPositions.value };
+  avatarPositions.value = cloneCoords(defaultAvatarPositions.value);
+  tagPositions.value = cloneCoords(defaultTagPositions.value);
   persistCoords();
 }
 
