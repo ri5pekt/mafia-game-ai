@@ -91,7 +91,8 @@ function seatSortKey(id: string): number {
 function seatPosition(seatIndex: number, seatCount: number): { top: string; left: string } {
   const step = (2 * Math.PI) / seatCount;
   const baseAngle = Math.PI / 2; // seat 0 at bottom-center
-  const angle = baseAngle - seatIndex * step; // clockwise
+  // Counter-clockwise so seat #1 is to the host's LEFT and seat #10 is to the host's RIGHT.
+  const angle = baseAngle + seatIndex * step;
 
   // Tunables (in % of container)
   const centerX = 50;
