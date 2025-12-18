@@ -329,3 +329,7 @@ Recommended dev workflow:
 
 -   Run **Postgres + Redis + API + Worker** in Docker Compose
 -   Run **Vue (Vite) locally** for fast HMR
+
+## Frontend assets
+
+-   Game table background (dev): `apps/web/src/assets/images/game-table.png`

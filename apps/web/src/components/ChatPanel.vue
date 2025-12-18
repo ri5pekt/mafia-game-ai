@@ -52,6 +52,34 @@ const messages = ref<Message[]>([
 <style scoped>
 .chatCard {
   height: 100%;
+  background: rgba(12, 16, 32, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.chatCard :deep(.p-card-body),
+.chatCard :deep(.p-card-content),
+.chatCard :deep(.p-card-caption),
+.chatCard :deep(.p-card-title) {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.chatCard :deep(.p-card-subtitle) {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.chatCard :deep(.p-divider) {
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+.chatCard :deep(.p-inputtext) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.chatCard :deep(.p-inputtext::placeholder) {
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .scroll {

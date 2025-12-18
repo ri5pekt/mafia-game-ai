@@ -43,6 +43,8 @@ import ChatPanel from '@/components/ChatPanel.vue';
 import PlayerAvatar from '@/components/PlayerAvatar.vue';
 import { ref } from 'vue';
 
+import gameTableUrl from '@/assets/images/game-table.png';
+
 type PlayerViewModel = {
   id: string;
   initials: string;
@@ -51,9 +53,7 @@ type PlayerViewModel = {
   left: string;
 };
 
-// Important: we keep this as a static path so the UI still boots even if
-// `apps/web/src/assets/game-bg.png` hasn't been added yet (it will just 404).
-const gameBgUrl = '/src/assets/game-bg.png';
+const gameBgUrl = gameTableUrl;
 const bgOk = ref(true);
 
 const players: PlayerViewModel[] = [
