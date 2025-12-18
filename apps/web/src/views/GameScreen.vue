@@ -7,7 +7,14 @@
     <main class="main">
       <section class="tableShell">
         <div class="tableContainer">
-          <img class="tableBg" :src="gameBgUrl" alt="Game table" />
+          <div class="tableFallback" aria-hidden="true" />
+          <img
+            v-if="bgOk"
+            class="tableBg"
+            :src="gameBgUrl"
+            alt="Game table"
+            @error="bgOk = false"
+          />
 
           <PlayerAvatar
             v-for="p in players"
@@ -34,6 +41,7 @@
 <script setup lang="ts">
 import ChatPanel from '@/components/ChatPanel.vue';
 import PlayerAvatar from '@/components/PlayerAvatar.vue';
+import { ref } from 'vue';
 
 type PlayerViewModel = {
   id: string;
@@ -46,6 +54,7 @@ type PlayerViewModel = {
 // Important: we keep this as a static path so the UI still boots even if
 // `apps/web/src/assets/game-bg.png` hasn't been added yet (it will just 404).
 const gameBgUrl = '/src/assets/game-bg.png';
+const bgOk = ref(true);
 
 const players: PlayerViewModel[] = [
   { id: 'P1', initials: 'P1', name: 'Player 1', top: '12%', left: '50%' },
@@ -97,6 +106,19 @@ const host = { top: '90%', left: '50%' };
   aspect-ratio: 16 / 9;
   display: grid;
   place-items: center;
+}
+
+.tableFallback {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  background:
+    radial-gradient(800px 400px at 50% 40%, rgba(34, 197, 94, 0.18), transparent 55%),
+    radial-gradient(900px 500px at 50% 55%, rgba(59, 130, 246, 0.16), transparent 60%),
+    radial-gradient(600px 300px at 50% 65%, rgba(0, 0, 0, 0.35), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0));
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  filter: drop-shadow(0 16px 40px rgba(0, 0, 0, 0.55));
 }
 
 .tableBg {
