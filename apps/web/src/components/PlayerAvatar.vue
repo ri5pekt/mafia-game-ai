@@ -1,16 +1,19 @@
 <template>
   <div class="avatar" :class="{ isHost }">
-    <div class="circle">
-      <img
-        v-if="avatarUrl"
-        class="photo"
-        :src="avatarUrl"
-        :alt="`${name} avatar`"
-        loading="lazy"
-        decoding="async"
-      />
-      <span v-else class="initials">{{ initials }}</span>
+    <div class="circleWrap">
+      <div class="circle">
+        <img
+          v-if="avatarUrl"
+          class="photo"
+          :src="avatarUrl"
+          :alt="`${name} avatar`"
+          loading="lazy"
+          decoding="async"
+        />
+        <span v-else class="initials">{{ initials }}</span>
+      </div>
 
+      <!-- Role badge is OUTSIDE the clipped circle so it won't be cut -->
       <div v-if="roleTag" class="roleTag" :class="roleTag.tone" :title="roleTag.label">
         <img class="roleIcon" :src="roleTag.iconUrl" :alt="roleTag.label" />
       </div>
@@ -39,9 +42,16 @@ const props = defineProps<{
 
 <style scoped>
 .avatar {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 6px;
+}
+
+.circleWrap {
+  position: relative;
+  width: 100px;
+  height: 100px;
 }
 
 .circle {
@@ -103,6 +113,11 @@ const props = defineProps<{
   border-color: rgba(255, 255, 255, 0.28);
 }
 
+.avatar.isHost .circleWrap {
+  width: 132px;
+  height: 132px;
+}
+
 .avatar.isHost .initials {
   font-size: 20px;
 }
@@ -113,8 +128,8 @@ const props = defineProps<{
 
 .roleTag {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
+  right: -8px;
+  bottom: -8px;
   width: 26px;
   height: 26px;
   border-radius: 8px;
@@ -136,8 +151,20 @@ const props = defineProps<{
 .roleIcon {
   width: 16px;
   height: 16px;
-  filter: invert(1);
   opacity: 0.95;
+}
+
+.avatar.isHost .roleTag {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  right: -10px;
+  bottom: -10px;
+}
+
+.avatar.isHost .roleIcon {
+  width: 18px;
+  height: 18px;
 }
 </style>
 
