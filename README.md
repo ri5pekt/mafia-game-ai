@@ -44,13 +44,13 @@ pnpm workspaces
 Monorepo Structure
 
 /apps
-  /web        (Vue 3 + Vite + TS + PrimeVue)
-  /api        (NestJS + TS)
-  /worker     (NestJS or minimal TS worker)
+/web (Vue 3 + Vite + TS + PrimeVue)
+/api (NestJS + TS)
+/worker (NestJS or minimal TS worker)
 /packages
-  /shared     (shared types, placeholders)
+/shared (shared types, placeholders)
 /docker
-  docker-compose.yml
+docker-compose.yml
 README.md
 
 Package Manager
@@ -233,9 +233,9 @@ export type Role = 'MAFIA' | 'SHERIFF' | 'TOWN';
 export type GamePhase = 'DAY' | 'NIGHT';
 
 export interface GameEvent {
-  id: string;
-  type: string;
-  payload: any;
+id: string;
+type: string;
+payload: any;
 }
 
 README.md Must Include
@@ -294,9 +294,9 @@ Do not generate the image.
 
 ### Prereqs
 
-- **Node.js 20+**
-- **pnpm** (install via `npm i -g pnpm`)
-- **Docker Desktop** (for Postgres/Redis)
+-   **Node.js 20+**
+-   **pnpm** (install via `npm i -g pnpm`)
+-   **Docker Desktop** (for Postgres/Redis)
 
 ### Install
 
@@ -318,8 +318,8 @@ pnpm dev:web
 
 ### Notes
 
-- **Backend is optional for first run**; the UI renders even if API/worker are offline.
-- **No gameplay/AI/OpenAI logic is implemented** in this scaffold.
+-   **Backend is optional for first run**; the UI renders even if API/worker are offline.
+-   **No gameplay/AI/OpenAI logic is implemented** in this scaffold.
 
 ---
 
@@ -327,8 +327,5 @@ pnpm dev:web
 
 Recommended dev workflow:
 
-- Run **Postgres + Redis + API + Worker** in Docker Compose
-- Run **Vue (Vite) locally** for fast HMR
-
-
-
+-   Run **Postgres + Redis + API + Worker** in Docker Compose
+-   Run **Vue (Vite) locally** for fast HMR
