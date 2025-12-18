@@ -10,6 +10,10 @@
         decoding="async"
       />
       <span v-else class="initials">{{ initials }}</span>
+
+      <div v-if="roleTag" class="roleTag" :class="roleTag.tone" :title="roleTag.label">
+        <img class="roleIcon" :src="roleTag.iconUrl" :alt="roleTag.label" />
+      </div>
     </div>
     <div class="label">
       <div class="name">{{ name }}</div>
@@ -24,6 +28,11 @@ const props = defineProps<{
   name: string;
   nickname?: string;
   avatarUrl?: string;
+  roleTag?: {
+    iconUrl: string;
+    label: string;
+    tone: "town" | "mafia";
+  };
   isHost?: boolean;
 }>();
 </script>
@@ -46,6 +55,7 @@ const props = defineProps<{
   backdrop-filter: blur(10px);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
   overflow: hidden;
+  position: relative;
 }
 
 .photo {
@@ -99,6 +109,35 @@ const props = defineProps<{
 
 .avatar.isHost .label {
   font-weight: 700;
+}
+
+.roleTag {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+}
+
+.roleTag.town {
+  background: rgba(190, 18, 60, 0.85); /* red */
+}
+
+.roleTag.mafia {
+  background: rgba(0, 0, 0, 0.75); /* black */
+}
+
+.roleIcon {
+  width: 16px;
+  height: 16px;
+  filter: invert(1);
+  opacity: 0.95;
 }
 </style>
 

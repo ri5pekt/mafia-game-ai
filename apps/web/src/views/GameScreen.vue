@@ -18,50 +18,52 @@
 
           <!-- Seat/Player number markers (environment overlay; NOT part of avatars) -->
           <div
-            v-for="p in players"
-            :key="`${p.id}-tag`"
+            v-for="s in seats"
+            :key="`seat-${s.seatNumber}-tag`"
             class="seatTag"
             :style="{
-              top: TAG_POSITIONS[p.id]?.top ?? p.top,
-              left: TAG_POSITIONS[p.id]?.left ?? p.left,
-              zIndex: p.zIndex + 1
+              top: TAG_POSITIONS[`p${s.seatNumber}`]?.top ?? s.top,
+              left: TAG_POSITIONS[`p${s.seatNumber}`]?.left ?? s.left,
+              zIndex: s.zIndex + 1
             }"
-            :title="`Seat ${p.seatIndex}: ${p.id.toUpperCase()}`"
+            :title="`Seat ${s.seatNumber}`"
           >
-            {{ p.tableNumber }}
+            {{ s.seatNumber }}
           </div>
 
           <div
-            v-for="p in players"
-            :key="p.id"
+            v-for="s in seats"
+            :key="`seat-${s.seatNumber}`"
             class="avatarWrap"
             :style="{
-              top: p.top,
-              left: p.left,
-              zIndex: p.zIndex
+              top: s.top,
+              left: s.left,
+              zIndex: s.zIndex
             }"
           >
             <PlayerAvatar
-              :initials="p.initials"
-              :name="p.name"
-              :nickname="p.nickname"
-              :avatar-url="p.avatarUrl"
+              :initials="`P${s.seatNumber}`"
+              :name="s.person.name"
+              :nickname="s.person.nickname"
+              :avatar-url="s.person.avatarUrl"
+              :role-tag="s.person.roleTag"
             />
           </div>
 
           <div
             class="avatarWrap"
             :style="{
-              top: host.top,
-              left: host.left,
-              zIndex: host.zIndex
+              top: hostSeat.top,
+              left: hostSeat.left,
+              zIndex: hostSeat.zIndex
             }"
           >
             <PlayerAvatar
-              :initials="host.initials"
-              :name="host.name"
-              :nickname="host.nickname"
-              :avatar-url="host.avatarUrl"
+              initials="HOST"
+              :name="hostSeat.person.name"
+              :nickname="hostSeat.person.nickname"
+              :avatar-url="hostSeat.person.avatarUrl"
+              :role-tag="hostSeat.person.roleTag"
               is-host
             />
           </div>
@@ -74,31 +76,21 @@
 <script setup lang="ts">
 import ChatPanel from '@/components/ChatPanel.vue';
 import PlayerAvatar from '@/components/PlayerAvatar.vue';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 
 import gameTableUrl from '@/assets/images/game-table.png';
 import { getPlayerAvatarUrl, PLAYERS_PRESET } from '@/data/playersPreset';
-
-type PlayerViewModel = {
-  id: string;
-  initials: string;
-  name: string;
-  nickname: string;
-  avatarUrl: string;
-  top: string;
-  left: string;
-  zIndex: number;
-  seatIndex: number;
-  tableNumber: number;
-};
-
-const gameBgUrl = gameTableUrl;
-const bgOk = ref(true);
+import type { RoleId } from '@shared/rules';
+import { ROLES } from '@shared/rules';
 
 type Coord = { top: string; left: string };
 type CoordMap = Record<string, Coord>;
 
-// Captured coordinates (percent-based) provided by you.
+const gameBgUrl = gameTableUrl;
+const bgOk = ref(true);
+
+// Captured seat coordinates (percent-based) provided by you.
+// Note: keys p1..p10 represent SEAT positions (not player identities).
 const AVATAR_POSITIONS: CoordMap = {
   p1: { top: '82.6448255964654%', left: '30.039613306133415%' },
   host: { top: '84.88491979514961%', left: '49.90909090909091%' },
@@ -126,63 +118,101 @@ const TAG_POSITIONS: CoordMap = {
   p8: { top: '54.20815329971852%', left: '79.98633178106836%' }
 };
 
-function seatSortKey(id: string): number {
-  if (id === 'host') return 0;
-  const m = id.match(/^p(\d+)$/);
-  if (!m) return 999;
-  return Number(m[1]);
+type RoleTag = { iconUrl: string; label: string; tone: 'town' | 'mafia' };
+
+const ROLE_ICON_URL: Record<RoleId, string> = {
+  TOWN: new URL('../assets/images/roles/town.svg', import.meta.url).href,
+  SHERIFF: new URL('../assets/images/roles/sheriff.svg', import.meta.url).href,
+  MAFIA: new URL('../assets/images/roles/mafia.svg', import.meta.url).href,
+  MAFIA_BOSS: new URL('../assets/images/roles/boss.svg', import.meta.url).href
+};
+
+type Person = {
+  id: string;
+  name: string;
+  nickname: string;
+  avatarUrl: string;
+  roleId: RoleId;
+  roleTag: RoleTag;
+};
+
+type Seat = {
+  seatNumber: number; // 1..10
+  top: string;
+  left: string;
+  zIndex: number;
+  person: Person;
+};
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
-// Equal spacing: 11 seats (10 players + host) distributed evenly around the table.
-// We approximate the table as an ellipse inside the 16:9 container.
-function seatPosition(seatIndex: number, seatCount: number): { top: string; left: string } {
-  const step = (2 * Math.PI) / seatCount;
-  const baseAngle = Math.PI / 2; // seat 0 at bottom-center
-  // Counter-clockwise so seat #1 is to the host's LEFT and seat #10 is to the host's RIGHT.
-  const angle = baseAngle + seatIndex * step;
-
-  // Tunables (in % of container)
-  const centerX = 50;
-  const centerY = 50;
-  const radiusX = 46;
-  const radiusY = 38;
-
-  const left = centerX + radiusX * Math.cos(angle);
-  const top = centerY + radiusY * Math.sin(angle);
-
-  return { left: `${left}%`, top: `${top}%` };
+function makeRolePool(): RoleId[] {
+  // v1 distribution for 10 players: 1 boss, 2 mafia, 1 sheriff, rest town.
+  return ['MAFIA_BOSS', 'MAFIA', 'MAFIA', 'SHERIFF', 'TOWN', 'TOWN', 'TOWN', 'TOWN', 'TOWN', 'TOWN'];
 }
 
-const seatCount = 11;
+function toRoleTag(roleId: RoleId): RoleTag {
+  const alignment = ROLES[roleId].alignment;
+  const tone: RoleTag['tone'] = alignment === 'MAFIA' ? 'mafia' : 'town';
+  return { iconUrl: ROLE_ICON_URL[roleId], label: roleId, tone };
+}
 
-const seatModels: PlayerViewModel[] = [...PLAYERS_PRESET]
-  .slice()
-  .sort((a, b) => seatSortKey(a.id) - seatSortKey(b.id))
-  .map((p, idx) => {
-    const pos = seatPosition(idx, seatCount);
-    const override = AVATAR_POSITIONS[p.id];
-    const effectivePos = override ?? pos;
-    const topNumber = Number.parseFloat(effectivePos.top);
-    const tableNumber = p.id === 'host' ? 0 : Number.parseInt(p.id.replace('p', ''), 10);
+const hostPreset = PLAYERS_PRESET.find((p) => p.id === 'host')!;
+const playerPresets = PLAYERS_PRESET.filter((p) => p.id !== 'host');
+
+// Re-randomize on each page load (refresh). Seat numbers are fixed.
+const shuffledPlayers = shuffle(playerPresets);
+const shuffledRoles = shuffle(makeRolePool());
+
+const seats = computed<Seat[]>(() => {
+  return Array.from({ length: 10 }, (_, i) => {
+    const seatNumber = i + 1;
+    const seatKey = `p${seatNumber}`;
+    const pos = AVATAR_POSITIONS[seatKey];
+    const topNumber = Number.parseFloat(pos.top);
+
+    const preset = shuffledPlayers[i];
+    const roleId = shuffledRoles[i];
+
+    const person: Person = {
+      id: preset.id,
+      name: preset.name,
+      nickname: preset.nickname,
+      avatarUrl: getPlayerAvatarUrl(preset.avatar),
+      roleId,
+      roleTag: toRoleTag(roleId)
+    };
+
     return {
-      id: p.id,
-      initials: p.id === 'host' ? 'HOST' : p.id.toUpperCase(),
-      name: p.name,
-      nickname: p.nickname,
-      avatarUrl: getPlayerAvatarUrl(p.avatar),
-      top: effectivePos.top,
-      left: effectivePos.left,
-      // Stacking: lower on screen should render above higher (prevents "back row" covering "front row")
+      seatNumber,
+      top: pos.top,
+      left: pos.left,
       zIndex: Math.round(topNumber * 10),
-      seatIndex: idx,
-      tableNumber: Number.isFinite(tableNumber) ? tableNumber : idx
+      person
     };
   });
+});
 
-const host = seatModels.find((p) => p.id === 'host')!;
-// Keep DOM order stable by player number for debugging/inspection (p1..p10),
-// while z-index controls visual stacking.
-const players = seatModels.filter((p) => p.id !== 'host').sort((a, b) => seatSortKey(a.id) - seatSortKey(b.id));
+const hostSeat = computed(() => {
+  const pos = AVATAR_POSITIONS.host;
+  const topNumber = Number.parseFloat(pos.top);
+  const person: Person = {
+    id: 'host',
+    name: hostPreset.name,
+    nickname: hostPreset.nickname,
+    avatarUrl: getPlayerAvatarUrl(hostPreset.avatar),
+    roleId: 'TOWN',
+    roleTag: { iconUrl: ROLE_ICON_URL.TOWN, label: 'HOST', tone: 'town' }
+  };
+  return { top: pos.top, left: pos.left, zIndex: Math.round(topNumber * 10) + 50, person };
+});
 </script>
 
 <style scoped>
