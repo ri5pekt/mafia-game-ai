@@ -6,6 +6,26 @@
 
     <main class="main">
       <section class="tableShell">
+        <div class="hud">
+          <Button
+            :label="isEditMode ? 'Done' : 'Edit Layout'"
+            :severity="isEditMode ? 'success' : 'secondary'"
+            @click="isEditMode = !isEditMode"
+          />
+          <Button
+            label="Copy Coords"
+            severity="secondary"
+            :disabled="!isEditMode"
+            @click="copyCoords()"
+          />
+          <Button
+            label="Reset"
+            severity="secondary"
+            :disabled="!isEditMode"
+            @click="resetCoords()"
+          />
+        </div>
+
         <div class="tableContainer">
           <div class="tableFallback" aria-hidden="true" />
           <img
@@ -21,34 +41,56 @@
             v-for="p in players"
             :key="`${p.id}-tag`"
             class="seatTag"
-            :style="{ top: p.top, left: p.left, zIndex: p.zIndex - 1 }"
+            :class="{ editing: isEditMode }"
+            :style="{
+              top: tagPositions[p.id]?.top ?? p.top,
+              left: tagPositions[p.id]?.left ?? p.left,
+              zIndex: p.zIndex + 1
+            }"
             :title="`Seat ${p.seatIndex}: ${p.id.toUpperCase()}`"
+            @pointerdown="(e) => isEditMode && startDrag(e, `tag:${p.id}`)"
           >
             {{ p.tableNumber }}
           </div>
 
-          <PlayerAvatar
+          <div
             v-for="p in players"
             :key="p.id"
-            :initials="p.initials"
-            :name="p.name"
-            :nickname="p.nickname"
-            :avatar-url="p.avatarUrl"
-            :top="p.top"
-            :left="p.left"
-            :z-index="p.zIndex"
-          />
+            class="avatarWrap"
+            :class="{ editing: isEditMode }"
+            :style="{
+              top: avatarPositions[p.id]?.top ?? p.top,
+              left: avatarPositions[p.id]?.left ?? p.left,
+              zIndex: p.zIndex
+            }"
+            @pointerdown="(e) => isEditMode && startDrag(e, `avatar:${p.id}`)"
+          >
+            <PlayerAvatar
+              :initials="p.initials"
+              :name="p.name"
+              :nickname="p.nickname"
+              :avatar-url="p.avatarUrl"
+            />
+          </div>
 
-          <PlayerAvatar
-            :initials="host.initials"
-            :name="host.name"
-            :nickname="host.nickname"
-            :avatar-url="host.avatarUrl"
-            :top="host.top"
-            :left="host.left"
-            :z-index="host.zIndex"
-            is-host
-          />
+          <div
+            class="avatarWrap"
+            :class="{ editing: isEditMode }"
+            :style="{
+              top: avatarPositions[host.id]?.top ?? host.top,
+              left: avatarPositions[host.id]?.left ?? host.left,
+              zIndex: host.zIndex
+            }"
+            @pointerdown="(e) => isEditMode && startDrag(e, `avatar:${host.id}`)"
+          >
+            <PlayerAvatar
+              :initials="host.initials"
+              :name="host.name"
+              :nickname="host.nickname"
+              :avatar-url="host.avatarUrl"
+              is-host
+            />
+          </div>
         </div>
       </section>
     </main>
@@ -58,7 +100,7 @@
 <script setup lang="ts">
 import ChatPanel from '@/components/ChatPanel.vue';
 import PlayerAvatar from '@/components/PlayerAvatar.vue';
-import { ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 import gameTableUrl from '@/assets/images/game-table.png';
 import { getPlayerAvatarUrl, PLAYERS_PRESET } from '@/data/playersPreset';
@@ -78,6 +120,28 @@ type PlayerViewModel = {
 
 const gameBgUrl = gameTableUrl;
 const bgOk = ref(true);
+const isEditMode = ref(false);
+
+type Coord = { top: string; left: string };
+type CoordMap = Record<string, Coord>;
+
+const LAYOUT_STORAGE_KEY = 'mafia.layout.v1';
+
+const avatarPositions = ref<CoordMap>({});
+const tagPositions = ref<CoordMap>({});
+
+type DragKind = 'avatar' | 'tag';
+type DragTarget = { kind: DragKind; id: string };
+
+const drag = ref<{
+  active: boolean;
+  target: DragTarget | null;
+  startPointerX: number;
+  startPointerY: number;
+  startTop: number; // percent
+  startLeft: number; // percent
+  rect: DOMRect | null;
+} | null>(null);
 
 function seatSortKey(id: string): number {
   if (id === 'host') return 0;
@@ -134,6 +198,141 @@ const host = seatModels.find((p) => p.id === 'host')!;
 // Keep DOM order stable by player number for debugging/inspection (p1..p10),
 // while z-index controls visual stacking.
 const players = seatModels.filter((p) => p.id !== 'host').sort((a, b) => seatSortKey(a.id) - seatSortKey(b.id));
+
+const defaultAvatarPositions = computed<CoordMap>(() => {
+  const map: CoordMap = {};
+  for (const p of seatModels) map[p.id] = { top: p.top, left: p.left };
+  return map;
+});
+
+const defaultTagPositions = computed<CoordMap>(() => {
+  const map: CoordMap = {};
+  for (const p of players) map[p.id] = { top: p.top, left: p.left };
+  return map;
+});
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function parseDragTarget(key: string): DragTarget {
+  const [kind, id] = key.split(':', 2);
+  if (kind !== 'avatar' && kind !== 'tag') throw new Error(`Unknown drag kind: ${kind}`);
+  return { kind, id };
+}
+
+function getRect(): DOMRect {
+  const el = document.querySelector<HTMLElement>('.tableContainer');
+  if (!el) throw new Error('tableContainer not found');
+  return el.getBoundingClientRect();
+}
+
+function readCoord(map: CoordMap, id: string, fallback: Coord): { top: number; left: number } {
+  const v = map[id] ?? fallback;
+  return { top: Number.parseFloat(v.top), left: Number.parseFloat(v.left) };
+}
+
+function setCoord(map: CoordMap, id: string, top: number, left: number) {
+  map[id] = { top: `${top}%`, left: `${left}%` };
+}
+
+function startDrag(e: PointerEvent, key: string) {
+  const target = parseDragTarget(key);
+  const rect = getRect();
+  const mapRef = target.kind === 'avatar' ? avatarPositions : tagPositions;
+  const fallback =
+    target.kind === 'avatar'
+      ? (defaultAvatarPositions.value[target.id] ?? { top: '50%', left: '50%' })
+      : (defaultTagPositions.value[target.id] ?? { top: '50%', left: '50%' });
+
+  const current = readCoord(mapRef.value, target.id, fallback);
+
+  (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  drag.value = {
+    active: true,
+    target,
+    startPointerX: e.clientX,
+    startPointerY: e.clientY,
+    startTop: current.top,
+    startLeft: current.left,
+    rect
+  };
+}
+
+function onPointerMove(e: PointerEvent) {
+  if (!drag.value?.active || !drag.value.rect || !drag.value.target) return;
+  const { rect, target, startPointerX, startPointerY, startTop, startLeft } = drag.value;
+
+  const dxPx = e.clientX - startPointerX;
+  const dyPx = e.clientY - startPointerY;
+  const dxPct = (dxPx / rect.width) * 100;
+  const dyPct = (dyPx / rect.height) * 100;
+
+  const nextLeft = clamp(startLeft + dxPct, 0, 100);
+  const nextTop = clamp(startTop + dyPct, 0, 100);
+
+  const map = (target.kind === 'avatar' ? avatarPositions.value : tagPositions.value) as CoordMap;
+  setCoord(map, target.id, nextTop, nextLeft);
+}
+
+function onPointerUp() {
+  if (!drag.value?.active) return;
+  drag.value = null;
+  persistCoords();
+}
+
+function persistCoords() {
+  const payload = {
+    version: 1,
+    units: 'percent',
+    avatarPositions: avatarPositions.value,
+    tagPositions: tagPositions.value
+  };
+  localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(payload, null, 2));
+}
+
+function loadCoords() {
+  const raw = localStorage.getItem(LAYOUT_STORAGE_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw) as {
+      avatarPositions?: CoordMap;
+      tagPositions?: CoordMap;
+    };
+    avatarPositions.value = parsed.avatarPositions ?? {};
+    tagPositions.value = parsed.tagPositions ?? {};
+  } catch {
+    // ignore
+  }
+}
+
+async function copyCoords() {
+  const payload = {
+    version: 1,
+    units: 'percent',
+    avatarPositions: avatarPositions.value,
+    tagPositions: tagPositions.value
+  };
+  const text = JSON.stringify(payload, null, 2);
+  await navigator.clipboard.writeText(text);
+}
+
+function resetCoords() {
+  avatarPositions.value = { ...defaultAvatarPositions.value };
+  tagPositions.value = { ...defaultTagPositions.value };
+  persistCoords();
+}
+
+onMounted(() => {
+  loadCoords();
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', onPointerMove);
+  window.removeEventListener('pointerup', onPointerUp);
+});
 </script>
 
 <style scoped>
@@ -162,6 +361,16 @@ const players = seatModels.filter((p) => p.id !== 'host').sort((a, b) => seatSor
 
 .tableShell {
   width: min(1100px, 100%);
+  position: relative;
+}
+
+.hud {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 50;
 }
 
 .tableContainer {
@@ -197,13 +406,13 @@ const players = seatModels.filter((p) => p.id !== 'host').sort((a, b) => seatSor
 .seatTag {
   position: absolute;
   transform: translate(-50%, -50%) translate(0, -78px);
-  width: 28px;
-  height: 28px;
+  width: 42px;
+  height: 42px;
   border-radius: 999px;
   display: grid;
   place-items: center;
   font-weight: 800;
-  font-size: 12px;
+  font-size: 16px;
   letter-spacing: 0.2px;
   color: rgba(255, 255, 255, 0.92);
   background: rgba(0, 0, 0, 0.55);
@@ -211,6 +420,22 @@ const players = seatModels.filter((p) => p.id !== 'host').sort((a, b) => seatSor
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(8px);
   pointer-events: none;
+}
+
+.seatTag.editing {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.avatarWrap {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.avatarWrap.editing {
+  pointer-events: auto;
+  cursor: grab;
 }
 </style>
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="avatar" :class="{ isHost }" :style="style">
+  <div class="avatar" :class="{ isHost }">
     <div class="circle">
       <img
         v-if="avatarUrl"
@@ -19,28 +19,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-
 const props = defineProps<{
   initials: string;
   name: string;
   nickname?: string;
   avatarUrl?: string;
-  top: string;
-  left: string;
   isHost?: boolean;
 }>();
-
-const style = computed(() => ({
-  top: props.top,
-  left: props.left
-}));
 </script>
 
 <style scoped>
 .avatar {
-  position: absolute;
-  transform: translate(-50%, -50%);
   display: grid;
   justify-items: center;
   gap: 6px;
