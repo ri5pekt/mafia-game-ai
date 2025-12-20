@@ -38,18 +38,19 @@ const hint = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 12px 18px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(10px);
   box-shadow: 0 16px 30px rgba(0, 0, 0, 0.35);
   user-select: none;
+  color: rgba(255, 255, 255, 0.94);
 }
 
 .dot {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 999px;
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);
 }
@@ -63,11 +64,11 @@ const hint = computed(() => {
 .label {
   font-weight: 900;
   letter-spacing: 0.8px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .hint {
-  font-size: 12px;
+  font-size: 13px;
   opacity: 0.75;
 }
 

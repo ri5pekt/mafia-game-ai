@@ -1,16 +1,20 @@
 <template>
-  <div class="avatar" :class="{ isHost }">
+  <div class="avatar" :class="{ isHost, isEliminated, isMasked: Boolean(maskPhoto) }">
     <div class="circleWrap">
       <div class="circle">
         <img
-          v-if="avatarUrl"
+          v-if="avatarUrl && !maskPhoto"
           class="photo"
           :src="avatarUrl"
           :alt="`${name} avatar`"
           loading="lazy"
           decoding="async"
         />
-        <span v-else class="initials">{{ initials }}</span>
+        <span v-else-if="!maskPhoto" class="initials">{{ initials }}</span>
+      </div>
+
+      <div v-if="statusIconUrl" class="statusIcon" title="Eliminated">
+        <img class="statusIconImg" :src="statusIconUrl" alt="Eliminated" />
       </div>
 
       <!-- Role badge is OUTSIDE the clipped circle so it won't be cut -->
@@ -37,6 +41,9 @@ const props = defineProps<{
     tone: "town" | "mafia";
   };
   isHost?: boolean;
+  isEliminated?: boolean;
+  maskPhoto?: boolean;
+  statusIconUrl?: string;
 }>();
 </script>
 
@@ -52,6 +59,27 @@ const props = defineProps<{
   position: relative;
   width: 100px;
   height: 100px;
+}
+
+.statusIcon {
+  position: absolute;
+  left: -6px;
+  top: -6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+}
+
+.statusIconImg {
+  width: 16px;
+  height: 16px;
+  opacity: 0.95;
 }
 
 .circle {
@@ -104,6 +132,33 @@ const props = defineProps<{
   font-size: 13px;
   color: rgba(255, 255, 255, 0.70);
   line-height: 1.1;
+}
+
+.avatar.isEliminated .circle,
+.avatar.isEliminated .label {
+  opacity: 0.55;
+}
+
+.avatar.isEliminated .photo {
+  filter: grayscale(0.75) saturate(0.7) brightness(0.85);
+}
+
+/* Night "asleep" masking: hide photo/initials and show a dark circle. */
+.avatar.isMasked .circle {
+  background: rgba(0, 0, 0, 0.78);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.avatar.isMasked .photo,
+.avatar.isMasked .initials {
+  display: none;
+}
+
+/* Keep elimination icon fully readable */
+.avatar.isEliminated .statusIcon,
+.avatar.isEliminated .statusIconImg {
+  opacity: 1;
+  filter: none;
 }
 
 .avatar.isHost .circle {

@@ -2,7 +2,7 @@
   <Card class="chatCard">
     <template #title>Chat / Events</template>
     <template #content>
-      <ScrollPanel class="scroll">
+      <ScrollPanel ref="scrollEl" class="scroll">
         <div class="messages">
           <div v-for="m in resolvedMessages" :key="m.id" class="message">
             <div class="meta">
@@ -26,7 +26,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import type { ChatMessage } from "@/types/chat";
 
 const props = defineProps<{
@@ -34,6 +34,7 @@ const props = defineProps<{
 }>();
 
 const draft = ref('');
+const scrollEl = ref<any>(null);
 
 const fallbackMessages = ref<ChatMessage[]>([
   { id: "m1", kind: "system", sender: "SYSTEM", time: "00:00", text: "Lobby created." },
@@ -42,6 +43,28 @@ const fallbackMessages = ref<ChatMessage[]>([
 ]);
 
 const resolvedMessages = computed(() => props.messages ?? fallbackMessages.value);
+
+async function scrollToBottom() {
+  await nextTick();
+  const root: HTMLElement | undefined = scrollEl.value?.$el;
+  if (!root) return;
+  const content = root.querySelector<HTMLElement>(".p-scrollpanel-content");
+  const wrapper = root.querySelector<HTMLElement>(".p-scrollpanel-wrapper");
+  const target = content ?? wrapper;
+  if (!target) return;
+  target.scrollTop = target.scrollHeight;
+}
+
+watch(
+  () => resolvedMessages.value.length,
+  () => {
+    void scrollToBottom();
+  }
+);
+
+onMounted(() => {
+  void scrollToBottom();
+});
 </script>
 
 <style scoped>
@@ -50,6 +73,22 @@ const resolvedMessages = computed(() => props.messages ?? fallbackMessages.value
   background: rgba(12, 16, 32, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.92);
+  display: flex;
+  flex-direction: column;
+}
+
+.chatCard :deep(.p-card-body) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chatCard :deep(.p-card-content) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .chatCard :deep(.p-card-body),
@@ -78,8 +117,9 @@ const resolvedMessages = computed(() => props.messages ?? fallbackMessages.value
 }
 
 .scroll {
-  height: calc(100vh - 220px);
-  min-height: 360px;
+  flex: 1;
+  min-height: 0;
+  height: auto;
 }
 
 .messages {
