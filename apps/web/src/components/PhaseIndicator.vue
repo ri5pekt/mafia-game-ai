@@ -2,7 +2,7 @@
   <div class="wrap" :class="phaseClass" role="status" aria-live="polite">
     <div class="dot" />
     <div class="text">
-      <div class="label">{{ phase }}</div>
+      <div class="label">{{ label }}</div>
       <div class="hint">{{ hint }}</div>
     </div>
   </div>
@@ -15,9 +15,16 @@ export type UiPhase = "DAY" | "NIGHT" | "VOTING" | "TIE";
 
 const props = defineProps<{
   phase: UiPhase;
+  dayNumber?: number;
 }>();
 
 const phaseClass = computed(() => `phase-${props.phase.toLowerCase()}`);
+
+const label = computed(() => {
+  const day = props.dayNumber;
+  if (day == null) return props.phase;
+  return `${props.phase} · Day ${day}`;
+});
 
 const hint = computed(() => {
   switch (props.phase) {

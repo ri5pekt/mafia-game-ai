@@ -206,7 +206,7 @@
         <main class="main">
             <section class="tableShell">
                 <div class="phaseHud">
-                    <PhaseIndicator :phase="uiPhase" />
+                    <PhaseIndicator :phase="uiPhase" :day-number="loopState.dayNumber" />
                 </div>
                 <div class="timerHud" aria-label="Game timer">
                     <div class="timerLabel">Time</div>

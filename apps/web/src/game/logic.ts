@@ -64,6 +64,7 @@ export function eliminationQueueFromPhaseChange(events: ApiGameEvent[], phaseId:
 export function rebuildLoopStateFromEvents(events: ApiGameEvent[]): LocalLoopState {
   let phaseId: LocalPhaseId = 'DAY_DISCUSSION';
   let dayNumber = 1;
+  let dayTransitionsToDiscussion = 0;
 
   const alive = new Set<number>(Array.from({ length: 10 }, (_, i) => i + 1));
   let order: number[] = Array.from(alive);
@@ -74,10 +75,22 @@ export function rebuildLoopStateFromEvents(events: ApiGameEvent[]): LocalLoopSta
   let elimIdx = 0;
   let phaseSpeakers: number[] | null = null;
 
+  const rotate = <T>(arr: T[], offset: number): T[] => {
+    if (arr.length === 0) return arr;
+    const n = ((offset % arr.length) + arr.length) % arr.length;
+    if (n === 0) return arr;
+    return [...arr.slice(n), ...arr.slice(0, n)];
+  };
+
   const recomputeOrderForPhase = () => {
     const aliveArr = Array.from(alive).sort((a, b) => a - b);
     switch (phaseId) {
       case 'DAY_DISCUSSION':
+        // Speaking order rotates by day. Day 1 starts at the lowest alive seat (usually #1),
+        // Day 2 starts at next seat, etc. (mod alive seats).
+        order = rotate(aliveArr, (dayNumber - 1) % Math.max(1, aliveArr.length));
+        idx = 0;
+        break;
       case 'DAY_VOTING':
       case 'TIE_REVOTE':
       case 'MASS_ELIMINATION_PROPOSAL':
@@ -116,6 +129,12 @@ export function rebuildLoopStateFromEvents(events: ApiGameEvent[]): LocalLoopSta
     if (ev.type === 'PHASE_CHANGED') {
       const to = ev.payload?.to as LocalPhaseId | undefined;
       if (to) {
+        if (to === 'DAY_DISCUSSION') {
+          // There is no explicit PHASE_CHANGED into Day 1; the game starts at Day 1 by default.
+          // Every subsequent transition into DAY_DISCUSSION increments the day number.
+          dayTransitionsToDiscussion++;
+          dayNumber = 1 + dayTransitionsToDiscussion;
+        }
         phaseId = to;
         // Some phases define explicit speaker order.
         const speakers = ev.payload?.speakers;
