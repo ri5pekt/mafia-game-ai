@@ -14,13 +14,6 @@
           </div>
         </div>
       </ScrollPanel>
-
-      <Divider />
-
-      <div class="composer">
-        <InputText class="input" v-model="draft" placeholder="Type a message (placeholder)" />
-        <Button label="Send" :disabled="true" />
-      </div>
     </template>
   </Card>
 </template>
@@ -33,7 +26,6 @@ const props = defineProps<{
   messages?: ChatMessage[];
 }>();
 
-const draft = ref('');
 const scrollEl = ref<any>(null);
 
 const fallbackMessages = ref<ChatMessage[]>([

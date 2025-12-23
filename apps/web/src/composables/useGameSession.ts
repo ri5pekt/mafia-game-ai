@@ -400,7 +400,7 @@ export function useGameSession(opts: {
         const text = first
             ? `Day ${day} discussion. ${first.name} (${first.nickname}) will speak first.`
             : `Day ${day} discussion begins.`;
-        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text } });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { tag: "DISCUSSION_START", text } });
     }
 
     function showBubbleForEvent(ev: ApiGameEvent) {
@@ -824,8 +824,8 @@ export function useGameSession(opts: {
 
     async function onBossGuess(targetSeatNumber: number) {
         if (loopState.value.phaseId !== "NIGHT_MAFIA_BOSS_GUESS") return;
-        const boss = actingBossSeatNumber.value;
-        if (boss == null) return;
+        const boss = bossSeatNumber.value;
+        if (boss == null) return; // if the real boss is dead, there is no boss check
         const isSheriff = roleBySeatNumber(targetSeatNumber) === "SHERIFF";
         await appendEvent({
             type: "NIGHT_BOSS_GUESS",
@@ -894,7 +894,7 @@ export function useGameSession(opts: {
         const from = loopState.value.phaseId;
         if (to === "NIGHT_MAFIA_DISCUSSION") return { from, to, speakers: bossLastOrder(mafiaSeatNumbers.value) };
         if (to === "NIGHT_MAFIA_BOSS_GUESS")
-            return { from, to, speakers: actingBossSeatNumber.value != null ? [actingBossSeatNumber.value] : [] };
+            return { from, to, speakers: bossSeatNumber.value != null ? [bossSeatNumber.value] : [] };
         if (to === "NIGHT_SHERIFF_ACTION")
             return { from, to, speakers: sheriffSeatNumber.value != null ? [sheriffSeatNumber.value] : [] };
         if (to === "DAY_VOTING") return { from, to, candidates: nominees.value };
@@ -1133,25 +1133,36 @@ export function useGameSession(opts: {
                 return;
             }
 
-            const bossActor = actingBossSeatNumber.value;
-            if (bossActor == null) {
+            // Boss check is ONLY available if the real boss is alive.
+            if (boss != null) {
                 await appendEvent({
                     type: "PHASE_CHANGED",
                     kind: "system",
-                    payload: { from: "NIGHT_MAFIA_DISCUSSION", to: "WIN_CHECK" },
+                    payload: { from: "NIGHT_MAFIA_DISCUSSION", to: "NIGHT_MAFIA_BOSS_GUESS", speakers: [boss] },
                 });
-                await checkWinAndMaybeEnd();
+                await appendEvent({
+                    type: "HOST_MESSAGE",
+                    kind: "host",
+                    payload: { text: `${seatLabel(boss)} (boss) is awake. Choose someone to check for Sheriff.` },
+                });
+                return;
+            }
+
+            // If boss is dead, skip boss-check entirely; proceed to sheriff (if alive) or morning.
+            const sheriff = sheriffSeatNumber.value;
+            if (sheriff == null) {
+                await resolveNightAndStartDay();
                 return;
             }
             await appendEvent({
                 type: "PHASE_CHANGED",
                 kind: "system",
-                payload: { from: "NIGHT_MAFIA_DISCUSSION", to: "NIGHT_MAFIA_BOSS_GUESS", speakers: [bossActor] },
+                payload: { from: "NIGHT_MAFIA_DISCUSSION", to: "NIGHT_SHERIFF_ACTION", speakers: [sheriff] },
             });
             await appendEvent({
                 type: "HOST_MESSAGE",
                 kind: "host",
-                payload: { text: `${seatLabel(bossActor)} (boss) is awake. Choose someone to check for Sheriff.` },
+                payload: { text: `${seatLabel(sheriff)} (Sheriff) is awake. Choose someone to investigate.` },
             });
             return;
         }
