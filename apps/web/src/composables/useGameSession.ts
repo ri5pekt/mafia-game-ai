@@ -21,8 +21,11 @@ import {
     getActiveGame,
     getGameEvents,
     getGameMeta,
+    requestAiAct,
 } from "@/game/api";
 import { buildChatMessages } from "@/game/chat";
+import { buildRoleLogTexts } from "@/game/logs";
+import { PLAYERS_PRESET } from "@/data/playersPreset";
 
 type CreatePayload = {
     players: { id: string; seatNumber: number; name: string; nickname: string }[];
@@ -52,6 +55,17 @@ export function useGameSession(opts: {
     const yesNoSelection = ref<"YES" | "NO" | null>(null);
 
     const devPhaseTo = ref<LocalPhaseId>("DAY_DISCUSSION");
+
+    type AiLogEntry = {
+        id: string;
+        createdAt: string;
+        request: any;
+        response?: any;
+        error?: string;
+    };
+
+    const aiLogs = ref<AiLogEntry[]>([]);
+    const aiBusy = ref(false);
 
     const sse = ref<EventSource | null>(null);
     const timerTick = ref(0);
@@ -217,6 +231,110 @@ export function useGameSession(opts: {
     function seatLabel(seatNumber: number) {
         const p = playerBySeat(seatNumber);
         return p?.name ?? `Seat #${seatNumber}`;
+    }
+
+    function presetById(id: string) {
+        return PLAYERS_PRESET.find((p) => p.id === id);
+    }
+
+    function roleLogFor(roleId: RoleId, texts: ReturnType<typeof buildRoleLogTexts>) {
+        if (roleId === "SHERIFF") return texts.sheriff;
+        if (roleId === "MAFIA") return texts.mafia;
+        if (roleId === "MAFIA_BOSS") return texts.boss;
+        return texts.town;
+    }
+
+    async function requestAi() {
+        gameError.value = "";
+        if (aiBusy.value) return null;
+        const g = gameMeta.value;
+        if (!g) return null;
+        if (g.endedAt) {
+            gameError.value = "Game has ended";
+            return null;
+        }
+        if (loopState.value.phaseId !== "DAY_DISCUSSION") {
+            gameError.value = "AI is only wired for DAY_DISCUSSION right now.";
+            return null;
+        }
+
+        const seatNumber = loopState.value.currentSpeakerSeatNumber;
+        const player = playerBySeat(seatNumber);
+        if (!player) {
+            gameError.value = `No player found for seat #${seatNumber}`;
+            return null;
+        }
+
+        const roleId = roleBySeatNumber(seatNumber);
+        const preset = presetById(player.id);
+
+        const roleLogs = buildRoleLogTexts({ meta: g, events: gameEvents.value });
+        const roleLogText = roleLogFor(roleId, roleLogs);
+
+        const request = {
+            action: "DAY_DISCUSSION_SPEAK" as const,
+            phaseId: loopState.value.phaseId,
+            gameId: g.id,
+            roleLogText,
+            aliveSeatNumbers: aliveSeatNumbers.value,
+            persona: {
+                seatNumber,
+                roleId,
+                name: player.name,
+                nickname: player.nickname,
+                profile: preset?.profile ?? "",
+            },
+        };
+
+        const logId = crypto.randomUUID();
+        aiLogs.value = [...aiLogs.value, { id: logId, createdAt: new Date().toISOString(), request }];
+
+        try {
+            aiBusy.value = true;
+            const resp = await requestAiAct(apiBase, request);
+            aiLogs.value = aiLogs.value.map((x) => (x.id === logId ? { ...x, response: resp } : x));
+
+            if (!resp.parsed) {
+                gameError.value = resp.parseError ?? "AI response could not be parsed.";
+                return resp;
+            }
+
+            const say = resp.parsed.say?.trim();
+            if (say) {
+                await appendEvent({
+                    type: "PLAYER_SPEAK",
+                    kind: "player",
+                    payload: { seatNumber, text: say },
+                });
+            }
+
+            const nominate = resp.parsed.nominateSeatNumber;
+            if (
+                typeof nominate === "number" &&
+                Number.isInteger(nominate) &&
+                nominate >= 1 &&
+                nominate <= 10 &&
+                aliveSet.value.has(nominate)
+            ) {
+                await appendEvent({
+                    type: "PLAYER_NOMINATE",
+                    kind: "system",
+                    payload: { seatNumber, targetSeatNumber: nominate },
+                });
+            }
+
+            // After the AI has acted, automatically end this speaker's turn (same as clicking "Finish turn").
+            await onEndTurn();
+
+            return resp;
+        } catch (err: any) {
+            const message = err?.message ?? String(err);
+            aiLogs.value = aiLogs.value.map((x) => (x.id === logId ? { ...x, error: message } : x));
+            gameError.value = message;
+            return null;
+        } finally {
+            aiBusy.value = false;
+        }
     }
 
     function seatLabelWithNick(seatNumber: number) {
@@ -1291,5 +1409,8 @@ export function useGameSession(opts: {
         onBossGuess,
         onSheriffInvestigate,
         devSwitchPhase,
+        requestAi,
+        aiLogs,
+        aiBusy,
     };
 }

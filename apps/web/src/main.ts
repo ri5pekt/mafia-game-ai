@@ -8,6 +8,7 @@ import Card from "primevue/card";
 import Dialog from "primevue/dialog";
 import Divider from "primevue/divider";
 import InputText from "primevue/inputtext";
+import ToggleSwitch from "primevue/toggleswitch";
 import ScrollPanel from "primevue/scrollpanel";
 import Dropdown from "primevue/dropdown";
 
@@ -29,6 +30,7 @@ app.component("Dialog", Dialog);
 app.component("ScrollPanel", ScrollPanel);
 app.component("Card", Card);
 app.component("InputText", InputText);
+app.component("ToggleSwitch", ToggleSwitch);
 app.component("Divider", Divider);
 app.component("Dropdown", Dropdown);
 

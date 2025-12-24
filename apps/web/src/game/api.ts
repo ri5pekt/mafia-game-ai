@@ -2,6 +2,35 @@ import type { ApiGameEvent, ApiGameMeta, ApiHostRef, ApiPlayerRef } from "./type
 
 export const DEFAULT_API_BASE = "http://localhost:3000";
 
+export type AiActionKind = "DAY_DISCUSSION_SPEAK";
+
+export type AiActRequest = {
+    model?: string;
+    action: AiActionKind;
+    phaseId: string;
+    gameId: string;
+    roleLogText: string;
+    persona: {
+        seatNumber: number;
+        roleId: "TOWN" | "SHERIFF" | "MAFIA" | "MAFIA_BOSS";
+        name: string;
+        nickname?: string;
+        profile?: string;
+    };
+    aliveSeatNumbers?: number[];
+};
+
+export type AiActResponse = {
+    requestId: string;
+    model: string;
+    prompt: string;
+    outputText: string;
+    parsed: { say: string; nominateSeatNumber: number | null } | null;
+    parseError?: string;
+    openaiRequest?: any;
+    openaiResponse?: any;
+};
+
 export async function apiFetch<T>(apiBase: string, path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${apiBase}${path}`, {
         ...init,
@@ -48,6 +77,13 @@ export async function endGame(apiBase: string, gameId: string) {
     return apiFetch<{ game: ApiGameMeta; event: ApiGameEvent }>(apiBase, `/game/${gameId}/end`, {
         method: "POST",
         body: JSON.stringify({}),
+    });
+}
+
+export async function requestAiAct(apiBase: string, req: AiActRequest) {
+    return apiFetch<AiActResponse>(apiBase, `/ai/act`, {
+        method: "POST",
+        body: JSON.stringify(req),
     });
 }
 

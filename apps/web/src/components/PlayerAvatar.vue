@@ -1,5 +1,5 @@
 <template>
-  <div class="avatar" :class="{ isHost, isEliminated, isMasked: Boolean(maskPhoto) }">
+  <div class="avatar" :class="{ isHost, isEliminated, isMasked: Boolean(maskPhoto), isLoading }">
     <div class="circleWrap">
       <div class="circle">
         <img
@@ -11,6 +11,10 @@
           decoding="async"
         />
         <span v-else-if="!maskPhoto" class="initials">{{ initials }}</span>
+      </div>
+
+      <div v-if="isLoading" class="loadingOverlay" aria-label="Thinking">
+        <div class="spinner" />
       </div>
 
       <div v-if="statusIconUrl" class="statusIcon" title="Eliminated">
@@ -44,6 +48,7 @@ const props = defineProps<{
   isEliminated?: boolean;
   maskPhoto?: boolean;
   statusIconUrl?: string;
+  isLoading?: boolean;
 }>();
 </script>
 
@@ -59,6 +64,35 @@ const props = defineProps<{
   position: relative;
   width: 100px;
   height: 100px;
+}
+
+.loadingOverlay {
+  position: absolute;
+  inset: -6px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: rgba(34, 197, 94, 0.95);
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.avatar.isLoading .circle {
+  filter: brightness(0.75) saturate(0.9);
 }
 
 .statusIcon {

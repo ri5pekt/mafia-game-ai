@@ -1,5 +1,5 @@
 <template>
-    <div class="layout">
+    <div class="layout" :class="{ sfw: hideVisuals }">
         <aside class="sidebar">
             <div class="sidebarStack">
                 <div class="chatWrap">
@@ -22,6 +22,12 @@
                     <template #content>
                         <div v-if="!devCollapsed">
                             <div class="devMeta">
+                                <div class="devLine devLineSwitch">
+                                    <span class="devK">Safe for work</span>
+                                    <div class="devSwitch">
+                                        <ToggleSwitch v-model="hideVisuals" />
+                                    </div>
+                                </div>
                                 <div class="devLine">
                                     <span class="devK">Phase</span>
                                     <span class="devV">{{ loopState.phaseId ?? "—" }}</span>
@@ -40,6 +46,19 @@
                                 <div class="devRow" v-if="canSpeak">
                                     <InputText class="devInput" v-model="speakDraft" placeholder="Speak (optional)" />
                                     <Button label="Speak" :disabled="speakDraft.trim().length === 0" @click="onSpeak" />
+                                </div>
+
+                                <div class="devRow" v-if="loopState.phaseId === 'DAY_DISCUSSION'">
+                                    <div class="devHint">
+                                        AI is wired for <b>DAY_DISCUSSION</b> only (speak + optional nomination).
+                                    </div>
+                                    <Button
+                                        label="Request AI"
+                                        severity="secondary"
+                                        :loading="aiBusy"
+                                        :disabled="aiBusy || !gameMeta || Boolean(gameMeta.endedAt)"
+                                        @click="requestAi"
+                                    />
                                 </div>
                                 <div class="devRow" v-if="canNominatePhase">
                                     <InputText
@@ -203,7 +222,7 @@
             </template>
         </Dialog>
 
-        <main class="main">
+        <main v-if="!hideVisuals" class="main">
             <section class="tableShell">
                 <div class="phaseHud">
                     <PhaseIndicator :phase="uiPhase" :day-number="loopState.dayNumber" />
@@ -284,6 +303,7 @@
                             :is-eliminated="!s.alive"
                             :mask-photo="s.alive && isNight && !isSeatAwake(s.seatNumber)"
                             :status-icon-url="eliminationIconUrlBySeat.get(s.seatNumber)"
+                            :is-loading="aiBusy && loopState.currentSpeakerSeatNumber === s.seatNumber"
                         />
 
                         <div v-if="voteCountBySeat.get(s.seatNumber)" class="voteBadge">
@@ -325,107 +345,8 @@
 
         <aside class="rightbar">
             <div class="rightStack">
-                <Card class="logsCard" :class="{ collapsed: logsCollapsed }">
-                    <template #title>
-                        <div class="logsTitleRow" @click="logsCollapsed = !logsCollapsed" role="button" tabindex="0">
-                            <span>Role Logs (AI prompts)</span>
-                            <Button
-                                class="logsToggle"
-                                severity="secondary"
-                                text
-                                :icon="logsCollapsed ? 'pi pi-chevron-up' : 'pi pi-chevron-down'"
-                                @click.stop="logsCollapsed = !logsCollapsed"
-                            />
-                        </div>
-                    </template>
-                    <template #content>
-                        <div v-if="!logsCollapsed" class="logsBody">
-                            <div class="logsHint">
-                                Town = public day info. Sheriff/Mafia/Boss include their private night actions.
-                            </div>
-
-                            <div class="logSection">
-                                <div class="logHeader" @click="openTown = !openTown" role="button" tabindex="0">
-                                    <div class="logTitle">Town log</div>
-                                    <div class="logActions">
-                                        <Button
-                                            size="small"
-                                            severity="secondary"
-                                            text
-                                            icon="pi pi-copy"
-                                            label="Copy"
-                                            @click.stop="copyText('town log', roleLogs.town)"
-                                        />
-                                        <span class="logChevron" :class="{ open: openTown }">▾</span>
-                                    </div>
-                                </div>
-                                <div v-if="openTown" class="logContent">
-                                    <textarea class="logText" :value="roleLogs.town" readonly />
-                                </div>
-                            </div>
-
-                            <div class="logSection">
-                                <div class="logHeader" @click="openSheriff = !openSheriff" role="button" tabindex="0">
-                                    <div class="logTitle">Sheriff log</div>
-                                    <div class="logActions">
-                                        <Button
-                                            size="small"
-                                            severity="secondary"
-                                            text
-                                            icon="pi pi-copy"
-                                            label="Copy"
-                                            @click.stop="copyText('sheriff log', roleLogs.sheriff)"
-                                        />
-                                        <span class="logChevron" :class="{ open: openSheriff }">▾</span>
-                                    </div>
-                                </div>
-                                <div v-if="openSheriff" class="logContent">
-                                    <textarea class="logText" :value="roleLogs.sheriff" readonly />
-                                </div>
-                            </div>
-
-                            <div class="logSection">
-                                <div class="logHeader" @click="openMafia = !openMafia" role="button" tabindex="0">
-                                    <div class="logTitle">Mafia log</div>
-                                    <div class="logActions">
-                                        <Button
-                                            size="small"
-                                            severity="secondary"
-                                            text
-                                            icon="pi pi-copy"
-                                            label="Copy"
-                                            @click.stop="copyText('mafia log', roleLogs.mafia)"
-                                        />
-                                        <span class="logChevron" :class="{ open: openMafia }">▾</span>
-                                    </div>
-                                </div>
-                                <div v-if="openMafia" class="logContent">
-                                    <textarea class="logText" :value="roleLogs.mafia" readonly />
-                                </div>
-                            </div>
-
-                            <div class="logSection">
-                                <div class="logHeader" @click="openBoss = !openBoss" role="button" tabindex="0">
-                                    <div class="logTitle">Mafia boss log</div>
-                                    <div class="logActions">
-                                        <Button
-                                            size="small"
-                                            severity="secondary"
-                                            text
-                                            icon="pi pi-copy"
-                                            label="Copy"
-                                            @click.stop="copyText('boss log', roleLogs.boss)"
-                                        />
-                                        <span class="logChevron" :class="{ open: openBoss }">▾</span>
-                                    </div>
-                                </div>
-                                <div v-if="openBoss" class="logContent">
-                                    <textarea class="logText" :value="roleLogs.boss" readonly />
-                                </div>
-                            </div>
-                        </div>
-                    </template>
-                </Card>
+                <AiLogsCard v-model:collapsed="aiCollapsed" :ai-logs="aiLogs" />
+                <RoleLogsCard v-model:collapsed="logsCollapsed" :role-logs="roleLogs" />
             </div>
         </aside>
     </div>
@@ -435,7 +356,9 @@
 import ChatPanel from "@/components/ChatPanel.vue";
 import PhaseIndicator, { type UiPhase } from "@/components/PhaseIndicator.vue";
 import PlayerAvatar from "@/components/PlayerAvatar.vue";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import AiLogsCard from "@/views/gameScreen/AiLogsCard.vue";
+import RoleLogsCard from "@/views/gameScreen/RoleLogsCard.vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import gameTableUrl from "@/assets/images/game-table.png";
 import { getPlayerAvatarUrl, PLAYERS_PRESET } from "@/data/playersPreset";
@@ -472,10 +395,7 @@ const yesNoOptions = [
 ];
 
 const logsCollapsed = ref(false);
-const openTown = ref(true);
-const openSheriff = ref(false);
-const openMafia = ref(false);
-const openBoss = ref(false);
+const aiCollapsed = ref(true);
 
 // Captured seat coordinates (percent-based) provided by you.
 // Note: keys p1..p10 represent SEAT positions (not player identities).
@@ -508,6 +428,8 @@ const DEFAULT_TAG_POSITIONS: CoordMap = {
 
 const avatarPositions = ref<CoordMap>(structuredClone(DEFAULT_AVATAR_POSITIONS));
 const tagPositions = ref<CoordMap>(structuredClone(DEFAULT_TAG_POSITIONS));
+
+const hideVisuals = useLocalStorageBool("mafia-game-ai:safeForWork", false);
 
 type RoleTag = { iconUrl: string; label: string; tone: "town" | "mafia" };
 
@@ -641,6 +563,9 @@ const {
     onSheriffInvestigate,
     devPhaseTo,
     devSwitchPhase,
+    requestAi,
+    aiLogs,
+    aiBusy,
 } = session;
 
 const roleLogs = computed(() => buildRoleLogTexts({ meta: gameMeta.value, events: gameEvents.value }));
@@ -858,6 +783,32 @@ function resetCoords() {
     avatarPositions.value = structuredClone(DEFAULT_AVATAR_POSITIONS);
     tagPositions.value = structuredClone(DEFAULT_TAG_POSITIONS);
 }
+
+function useLocalStorageBool(key: string, defaultValue: boolean) {
+    const v = ref(defaultValue);
+
+    try {
+        const raw = localStorage.getItem(key);
+        if (raw === "true") v.value = true;
+        if (raw === "false") v.value = false;
+    } catch {
+        // ignore (private mode / blocked storage)
+    }
+
+    watch(
+        v,
+        (next) => {
+            try {
+                localStorage.setItem(key, String(next));
+            } catch {
+                // ignore
+            }
+        },
+        { flush: "post" }
+    );
+
+    return v;
+}
 </script>
 
 <style scoped>
@@ -865,6 +816,24 @@ function resetCoords() {
     display: flex;
     height: 100vh;
     width: 100%;
+}
+
+.layout.sfw {
+    gap: 12px;
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+.layout.sfw .sidebar {
+    border-right: none;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+}
+
+.layout.sfw .rightbar {
+    border-left: none;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
 }
 
 .sidebar {
@@ -887,8 +856,8 @@ function resetCoords() {
 }
 
 .rightbar {
-    width: 380px;
-    min-width: 380px;
+    width: 560px;
+    min-width: 560px;
     padding: 12px;
     box-sizing: border-box;
     border-left: 1px solid rgba(255, 255, 255, 0.08);
@@ -1006,6 +975,99 @@ function resetCoords() {
     outline: none;
 }
 
+.aiStream {
+    max-height: 520px;
+    overflow: auto;
+    display: grid;
+    gap: 12px;
+    padding-right: 6px;
+}
+
+.aiEmpty {
+    padding: 10px 10px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+}
+
+.aiEntry {
+    display: grid;
+    gap: 10px;
+}
+
+.aiEntryHeader {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+}
+
+.aiEntryTitle {
+    font-weight: 800;
+    color: rgba(255, 255, 255, 0.82);
+}
+
+.aiEntryMeta {
+    opacity: 0.8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.aiBlock {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.aiBlockTitle {
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0.2px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.aiReq .aiBlockTitle {
+    background: rgba(59, 130, 246, 0.18);
+}
+
+.aiResp .aiBlockTitle {
+    background: rgba(34, 197, 94, 0.16);
+}
+
+.aiPre {
+    margin: 0;
+    padding: 10px 10px;
+    font-size: 12px;
+    line-height: 1.3;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.aiReq .aiPre {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.aiResp .aiPre {
+    background: rgba(34, 197, 94, 0.06);
+}
+
+.aiPending {
+    padding: 10px 10px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(34, 197, 94, 0.04);
+}
+
+.aiErrorInline {
+    padding: 10px 10px;
+    font-size: 12px;
+    color: rgba(248, 113, 113, 0.95);
+    white-space: pre-line;
+    background: rgba(248, 113, 113, 0.08);
+}
+
 .devCard :deep(.p-card-body),
 .devCard :deep(.p-card-content),
 .devCard :deep(.p-card-caption),
@@ -1040,6 +1102,15 @@ function resetCoords() {
     display: flex;
     justify-content: space-between;
     gap: 10px;
+}
+
+.devLineSwitch {
+    align-items: center;
+}
+
+.devSwitch {
+    display: inline-flex;
+    align-items: center;
 }
 
 .devK {
