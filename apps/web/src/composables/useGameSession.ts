@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { ChatMessage } from "@/types/chat";
 import type { ApiGameEvent, ApiGameMeta, Bubble, LocalPhaseId } from "@/game/types";
 import type { RoleId } from "@shared/rules";
@@ -66,16 +66,64 @@ export function useGameSession(opts: {
 
     const aiLogs = ref<AiLogEntry[]>([]);
     const aiBusy = ref(false);
+    const aiPrefetch = ref<
+        | {
+              seatNumber: number;
+              requestKey: string;
+              startedAt: number;
+              promise: Promise<any>;
+              request: any;
+              response?: any;
+              error?: string;
+          }
+        | null
+    >(null);
+    const aiPrefetchSeatNumber = computed(() => aiPrefetch.value?.seatNumber ?? null);
+    const aiPrefetchBusy = computed(() => Boolean(aiPrefetch.value && !aiPrefetch.value.response && !aiPrefetch.value.error));
+
+    const autoMode = ref(false);
+
+    // Prevent repeated AI in "one-shot" phases (boss guess / sheriff investigate).
+    // Auto-mode can schedule a new request between blocking TTS bubbles, so we need an explicit guard.
+    const oneShotAiDoneKeys = new Set<string>();
+
+    const bossNightPlan = ref<
+        | {
+              // Token of the NIGHT_MAFIA_DISCUSSION phase we captured this plan from.
+              nightDiscussionPhaseToken: string;
+              bossSeatNumber: number;
+              selectKillSeatNumber: number | null;
+              guessSheriffSeatNumber: number | null;
+              consumedKill: boolean;
+              consumedGuess: boolean;
+          }
+        | null
+    >(null);
 
     const sse = ref<EventSource | null>(null);
     const timerTick = ref(0);
     // Keys: "p1".."p10" for players, and "host" for host bubble.
     const bubbleBySeat = ref<Map<string, Bubble>>(new Map());
 
-    // Host bubbles should be readable even when host sends multiple messages quickly.
-    // We queue host bubble texts and show them sequentially.
-    let hostBubbleRunning = false;
-    const hostBubbleQueue: Array<{ text: string; ms: number }> = [];
+    // Text-to-speech playback state (sequential; game waits for the current bubble voice unless skipped).
+    const ttsBusy = ref(false);
+    const ttsNowKey = ref<string | null>(null);
+
+    type TtsParams = { languageCode: string; voiceName: string; speakingRate: number; pitch: number };
+    type SpeechQueueItem = { key: string; text: string; tts: TtsParams; resolve: () => void };
+
+    let speechRunning = false;
+    const speechQueue: SpeechQueueItem[] = [];
+    const speechPromiseByEventId = new Map<string, Promise<void>>();
+    let currentSpeech:
+        | {
+              key: string;
+              controller: AbortController;
+              audio: HTMLAudioElement | null;
+              url: string | null;
+              finish: () => void;
+          }
+        | null = null;
 
     const voteIconUrl = new URL("../assets/images/icons/vote.svg", import.meta.url).href;
     const sightIconUrl = new URL("../assets/images/icons/sight.svg", import.meta.url).href;
@@ -178,6 +226,7 @@ export function useGameSession(opts: {
             p === "TIE_DISCUSSION" ||
             p === "ELIMINATION_SPEECH" ||
             p === "NIGHT_MAFIA_DISCUSSION" ||
+            p === "NIGHT_MAFIA_KILL_SELECT" ||
             p === "NIGHT_MAFIA_BOSS_GUESS" ||
             p === "NIGHT_SHERIFF_ACTION"
         );
@@ -191,6 +240,7 @@ export function useGameSession(opts: {
             p === "TIE_DISCUSSION" ||
             p === "ELIMINATION_SPEECH" ||
             p === "NIGHT_MAFIA_DISCUSSION" ||
+            p === "NIGHT_MAFIA_KILL_SELECT" ||
             p === "NIGHT_MAFIA_BOSS_GUESS" ||
             p === "NIGHT_SHERIFF_ACTION"
         );
@@ -237,6 +287,147 @@ export function useGameSession(opts: {
         return PLAYERS_PRESET.find((p) => p.id === id);
     }
 
+    function buildAiRequestForSeat(seatNumber: number) {
+        const g = gameMeta.value;
+        if (!g) return null;
+        const player = playerBySeat(seatNumber);
+        if (!player) return null;
+        const roleId = roleBySeatNumber(seatNumber);
+        const preset = presetById(player.id);
+
+        const roleLogs = buildRoleLogTexts({ meta: g, events: gameEvents.value });
+        const roleLogText = roleLogFor(roleId, roleLogs);
+
+        const phaseId = loopState.value.phaseId;
+        const actingBoss = actingBossSeatNumber.value;
+        const action =
+            phaseId === "DAY_DISCUSSION"
+                ? ("DAY_DISCUSSION_SPEAK" as const)
+                : phaseId === "DAY_VOTING"
+                ? ("DAY_VOTING_DECIDE_ALL" as const)
+                : phaseId === "TIE_REVOTE"
+                ? ("TIE_REVOTE_DECIDE_ALL" as const)
+            : phaseId === "MASS_ELIMINATION_PROPOSAL"
+                ? ("MASS_ELIMINATION_PROPOSAL_DECIDE_ALL" as const)
+                : phaseId === "ELIMINATION_SPEECH"
+                ? ("ELIMINATION_SPEECH_LAST_WORDS" as const)
+                : phaseId === "NIGHT_MAFIA_DISCUSSION"
+                ? (actingBoss != null && seatNumber === actingBoss
+                      ? ("NIGHT_MAFIA_BOSS_DISCUSSION_SELECT_KILL_GUESS_SHERIFF" as const)
+                      : ("NIGHT_MAFIA_DISCUSSION_SPEAK" as const))
+            : phaseId === "NIGHT_MAFIA_KILL_SELECT"
+                ? null // no AI call; use bossNightPlan
+                : phaseId === "NIGHT_MAFIA_BOSS_GUESS"
+                ? ("NIGHT_MAFIA_BOSS_GUESS_SHERIFF" as const)
+                : phaseId === "NIGHT_SHERIFF_ACTION"
+                ? ("NIGHT_SHERIFF_INVESTIGATE" as const)
+                : null;
+        if (!action) return null;
+
+        const voteCandidates =
+            phaseId === "DAY_VOTING" ? nominees.value : phaseId === "TIE_REVOTE" ? tieCandidates.value : undefined;
+        const massCandidates = phaseId === "MASS_ELIMINATION_PROPOSAL" ? tieCandidates.value : undefined;
+
+        return {
+            action,
+            phaseId,
+            gameId: g.id,
+            roleLogText:
+                phaseId === "DAY_VOTING" || phaseId === "TIE_REVOTE" || phaseId === "MASS_ELIMINATION_PROPOSAL"
+                    ? roleLogs.all
+                    : roleLogText,
+            aliveSeatNumbers: aliveSeatNumbers.value,
+            killTargetSeatNumbers:
+                phaseId === "NIGHT_MAFIA_DISCUSSION" ? nightKillOptions.value.map((x) => x.value) : undefined,
+            awakeSeatNumbers: phaseId === "NIGHT_MAFIA_DISCUSSION" ? mafiaSeatNumbers.value : undefined,
+            investigateTargetSeatNumbers:
+                phaseId === "NIGHT_SHERIFF_ACTION"
+                    ? aliveSeatNumbers.value.filter((s) => s !== seatNumber)
+                    : undefined,
+            voteCandidateSeatNumbers: voteCandidates,
+            // Reuse voteCandidateSeatNumbers to describe the mass-elimination proposal candidates.
+            ...(massCandidates ? { voteCandidateSeatNumbers: massCandidates } : {}),
+            persona: {
+                seatNumber,
+                roleId,
+                name: player.name,
+                nickname: player.nickname,
+                profile: preset?.profile ?? "",
+            },
+        };
+    }
+
+    function nextAliveSeatAfter(seatNumber: number): number | null {
+        const alive = aliveSeatNumbers.value;
+        const idx = alive.indexOf(seatNumber);
+        if (idx === -1) return null;
+        const next = alive[idx + 1];
+        return Number.isFinite(next) ? next : null;
+    }
+
+    function currentPhaseToken(phaseId: LocalPhaseId): string {
+        for (let i = gameEvents.value.length - 1; i >= 0; i--) {
+            const ev = gameEvents.value[i];
+            if (ev.type === "PHASE_CHANGED" && ev.payload?.to === phaseId) return String(ev.id);
+        }
+        return `start:${phaseId}`;
+    }
+
+    function buildPrefetchKey(request: any): string {
+        const g = gameMeta.value;
+        const gid = g?.id ?? "";
+        return [
+            gid,
+            String(request?.phaseId ?? ""),
+            currentPhaseToken(loopState.value.phaseId),
+            String(request?.action ?? ""),
+            String(request?.persona?.seatNumber ?? ""),
+        ].join("|");
+    }
+
+    function startPrefetchForSeat(seatNumber: number) {
+        // Prefetch is only wired for phases where AI logic exists.
+        const phase = loopState.value.phaseId;
+        if (
+            !(
+                phase === "DAY_DISCUSSION" ||
+                phase === "DAY_VOTING" ||
+                phase === "TIE_REVOTE" ||
+                phase === "MASS_ELIMINATION_PROPOSAL" ||
+                phase === "ELIMINATION_SPEECH" ||
+                phase === "NIGHT_MAFIA_DISCUSSION" ||
+                phase === "NIGHT_MAFIA_BOSS_GUESS" ||
+                phase === "NIGHT_SHERIFF_ACTION"
+            )
+        )
+            return;
+        const g = gameMeta.value;
+        if (!g || g.endedAt) return;
+
+        const request = buildAiRequestForSeat(seatNumber);
+        if (!request) return;
+        const requestKey = buildPrefetchKey(request);
+
+        // If we're already prefetching the exact same request, keep it.
+        if (aiPrefetch.value?.seatNumber === seatNumber && aiPrefetch.value?.requestKey === requestKey) return;
+
+        const startedAt = Date.now();
+        const promise = requestAiAct(apiBase, request)
+            .then((resp) => {
+                if (aiPrefetch.value?.seatNumber === seatNumber && aiPrefetch.value?.requestKey === requestKey)
+                    aiPrefetch.value = { ...aiPrefetch.value, response: resp };
+                return resp;
+            })
+            .catch((e: any) => {
+                const message = e?.message ?? String(e);
+                if (aiPrefetch.value?.seatNumber === seatNumber && aiPrefetch.value?.requestKey === requestKey)
+                    aiPrefetch.value = { ...aiPrefetch.value, error: message };
+                throw e;
+            });
+
+        aiPrefetch.value = { seatNumber, requestKey, startedAt, promise, request };
+    }
+
     function roleLogFor(roleId: RoleId, texts: ReturnType<typeof buildRoleLogTexts>) {
         if (roleId === "SHERIFF") return texts.sheriff;
         if (roleId === "MAFIA") return texts.mafia;
@@ -246,6 +437,7 @@ export function useGameSession(opts: {
 
     async function requestAi() {
         gameError.value = "";
+        if (ttsBusy.value) return null;
         if (aiBusy.value) return null;
         const g = gameMeta.value;
         if (!g) return null;
@@ -253,45 +445,125 @@ export function useGameSession(opts: {
             gameError.value = "Game has ended";
             return null;
         }
-        if (loopState.value.phaseId !== "DAY_DISCUSSION") {
-            gameError.value = "AI is only wired for DAY_DISCUSSION right now.";
+        const phaseId = loopState.value.phaseId;
+        if (phaseId === "NIGHT_MAFIA_KILL_SELECT") {
+            const boss = bossSeatNumber.value ?? actingBossSeatNumber.value;
+            const phaseToken = currentPhaseToken("NIGHT_MAFIA_DISCUSSION");
+            const plan = bossNightPlan.value;
+            if (!boss || !plan || plan.nightDiscussionPhaseToken !== phaseToken || plan.consumedKill) {
+                gameError.value = "Missing boss kill plan for this night.";
+                return null;
+            }
+            // Apply the boss's preloaded selection without an extra AI call.
+            const select = plan.selectKillSeatNumber;
+            if (typeof select === "number" && Number.isInteger(select) && nightKillOptions.value.some((x) => x.value === select)) {
+                await appendEvent({
+                    type: "PLAYER_SPEAK",
+                    kind: "player",
+                    payload: { seatNumber: boss, text: `I select kill target: #${select} ${seatLabel(select)}.` },
+                });
+                await appendEvent({
+                    type: "NIGHT_KILL_SELECT",
+                    kind: "player",
+                    payload: { seatNumber: boss, targetSeatNumber: select },
+                });
+            }
+            bossNightPlan.value = { ...plan, consumedKill: true };
+            await onEndTurn();
+            return { parsed: { ok: true }, requestId: "local", model: "local", roleLogCharCount: 0, promptCharCount: 0, openaiLatencyMs: 0, prompt: "", outputText: "" } as any;
+        }
+        const phaseToken = (() => {
+            for (let i = gameEvents.value.length - 1; i >= 0; i--) {
+                const ev = gameEvents.value[i];
+                if (ev.type === "PHASE_CHANGED" && ev.payload?.to === phaseId) return String(ev.id);
+            }
+            return `start:${phaseId}`;
+        })();
+        const oneShotKey = `ai-once:${g.id}:${phaseToken}`;
+        const isOneShotPhase = phaseId === "NIGHT_MAFIA_BOSS_GUESS" || phaseId === "NIGHT_SHERIFF_ACTION";
+        if (
+            !(
+                phaseId === "DAY_DISCUSSION" ||
+                phaseId === "DAY_VOTING" ||
+                phaseId === "TIE_REVOTE" ||
+                phaseId === "MASS_ELIMINATION_PROPOSAL" ||
+                phaseId === "ELIMINATION_SPEECH" ||
+                phaseId === "NIGHT_MAFIA_DISCUSSION" ||
+                phaseId === "NIGHT_MAFIA_BOSS_GUESS" ||
+                phaseId === "NIGHT_SHERIFF_ACTION"
+            )
+        ) {
+            gameError.value =
+                "AI is only wired for DAY_DISCUSSION, DAY_VOTING, TIE_REVOTE, MASS_ELIMINATION_PROPOSAL, ELIMINATION_SPEECH, NIGHT_MAFIA_DISCUSSION, NIGHT_MAFIA_BOSS_GUESS, and NIGHT_SHERIFF_ACTION right now.";
             return null;
         }
+        if (isOneShotPhase && oneShotAiDoneKeys.has(oneShotKey)) return null;
 
         const seatNumber = loopState.value.currentSpeakerSeatNumber;
-        const player = playerBySeat(seatNumber);
-        if (!player) {
+
+        if (phaseId === "NIGHT_MAFIA_BOSS_GUESS") {
+            const boss = bossSeatNumber.value ?? actingBossSeatNumber.value;
+            const nightToken = currentPhaseToken("NIGHT_MAFIA_DISCUSSION");
+            const plan = bossNightPlan.value;
+            if (
+                boss &&
+                seatNumber === boss &&
+                plan &&
+                plan.nightDiscussionPhaseToken === nightToken &&
+                !plan.consumedGuess &&
+                typeof plan.guessSheriffSeatNumber === "number" &&
+                Number.isInteger(plan.guessSheriffSeatNumber) &&
+                aliveSet.value.has(plan.guessSheriffSeatNumber) &&
+                plan.guessSheriffSeatNumber !== boss
+            ) {
+                oneShotAiDoneKeys.add(oneShotKey);
+                await appendEvent({
+                    type: "PLAYER_SPEAK",
+                    kind: "player",
+                    payload: { seatNumber: boss, text: `I will check #${plan.guessSheriffSeatNumber} ${seatLabel(plan.guessSheriffSeatNumber)} for Sheriff.` },
+                });
+                bossNightPlan.value = { ...plan, consumedGuess: true };
+                await onBossGuess(plan.guessSheriffSeatNumber);
+                return { parsed: { ok: true }, requestId: "local", model: "local", roleLogCharCount: 0, promptCharCount: 0, openaiLatencyMs: 0, prompt: "", outputText: "" } as any;
+            }
+        }
+
+        const request = buildAiRequestForSeat(seatNumber);
+        if (!request) {
             gameError.value = `No player found for seat #${seatNumber}`;
             return null;
         }
-
-        const roleId = roleBySeatNumber(seatNumber);
-        const preset = presetById(player.id);
-
-        const roleLogs = buildRoleLogTexts({ meta: g, events: gameEvents.value });
-        const roleLogText = roleLogFor(roleId, roleLogs);
-
-        const request = {
-            action: "DAY_DISCUSSION_SPEAK" as const,
-            phaseId: loopState.value.phaseId,
-            gameId: g.id,
-            roleLogText,
-            aliveSeatNumbers: aliveSeatNumbers.value,
-            persona: {
-                seatNumber,
-                roleId,
-                name: player.name,
-                nickname: player.nickname,
-                profile: preset?.profile ?? "",
-            },
-        };
+        const requestKey = buildPrefetchKey(request);
 
         const logId = crypto.randomUUID();
         aiLogs.value = [...aiLogs.value, { id: logId, createdAt: new Date().toISOString(), request }];
 
         try {
-            aiBusy.value = true;
-            const resp = await requestAiAct(apiBase, request);
+            let resp: any;
+
+            // If we already prefetched for this seat, use it (or await it).
+            const pref = aiPrefetch.value;
+            if (pref?.seatNumber === seatNumber && pref.requestKey === requestKey) {
+                try {
+                    resp = pref.response ?? (await pref.promise);
+                } catch {
+                    resp = undefined;
+                } finally {
+                    aiPrefetch.value = null;
+                }
+            }
+
+            // Otherwise, make a normal request and show the spinner only for the network call.
+            if (!resp) {
+                try {
+                    aiBusy.value = true;
+                    resp = await requestAiAct(apiBase, request);
+                } finally {
+                    // Stop the avatar spinner as soon as the AI network call finishes.
+                    // (TTS playback may continue afterwards and should not be treated as "AI loading".)
+                    aiBusy.value = false;
+                }
+            }
             aiLogs.value = aiLogs.value.map((x) => (x.id === logId ? { ...x, response: resp } : x));
 
             if (!resp.parsed) {
@@ -299,32 +571,205 @@ export function useGameSession(opts: {
                 return resp;
             }
 
-            const say = resp.parsed.say?.trim();
-            if (say) {
-                await appendEvent({
-                    type: "PLAYER_SPEAK",
-                    kind: "player",
-                    payload: { seatNumber, text: say },
-                });
+            // Apply action-specific side effects.
+            if (request.action === "DAY_DISCUSSION_SPEAK") {
+                const say = (resp.parsed as any)?.say?.trim();
+                if (say) {
+                    await appendEvent({
+                        type: "PLAYER_SPEAK",
+                        kind: "player",
+                        payload: { seatNumber, text: say },
+                    });
+                }
+
+                const nominate = (resp.parsed as any)?.nominateSeatNumber;
+                if (
+                    typeof nominate === "number" &&
+                    Number.isInteger(nominate) &&
+                    nominate >= 1 &&
+                    nominate <= 10 &&
+                    aliveSet.value.has(nominate)
+                ) {
+                    await appendEvent({
+                        type: "PLAYER_NOMINATE",
+                        kind: "system",
+                        payload: { seatNumber, targetSeatNumber: nominate },
+                    });
+                }
             }
 
-            const nominate = resp.parsed.nominateSeatNumber;
+            if (request.action === "DAY_VOTING_DECIDE_ALL" || request.action === "TIE_REVOTE_DECIDE_ALL") {
+                const phase = loopState.value.phaseId;
+                if (!(phase === "DAY_VOTING" || phase === "TIE_REVOTE")) return resp;
+                const candidates = phase === "DAY_VOTING" ? nominees.value : tieCandidates.value;
+
+                const votes = (resp.parsed as any)?.votes as any[] | undefined;
+                if (!Array.isArray(votes)) {
+                    gameError.value = resp.parseError ?? "AI votes missing.";
+                    return resp;
+                }
+
+                // Append all votes at once (no per-seat prompts).
+                for (const v of votes) {
+                    const voter = Number(v?.voterSeatNumber);
+                    const target = Number(v?.targetSeatNumber);
+                    if (!Number.isFinite(voter) || !Number.isFinite(target)) continue;
+                    if (!aliveSet.value.has(voter)) continue;
+                    if (!candidates.includes(target)) continue;
+                    await appendEvent({
+                        type: "PLAYER_VOTE",
+                        kind: "player",
+                        payload: { voterSeatNumber: voter, targetSeatNumber: target },
+                    });
+                }
+
+                // Resolve immediately with a short on-screen tally pause.
+                await finalizeVotingPhase(phase);
+                return resp;
+            }
+
+            if (request.action === "MASS_ELIMINATION_PROPOSAL_DECIDE_ALL") {
+                const phase = loopState.value.phaseId;
+                if (phase !== "MASS_ELIMINATION_PROPOSAL") return resp;
+                const votes = (resp.parsed as any)?.votes as any[] | undefined;
+                if (!Array.isArray(votes)) {
+                    gameError.value = resp.parseError ?? "AI mass votes missing.";
+                    return resp;
+                }
+                for (const v of votes) {
+                    const voter = Number(v?.voterSeatNumber);
+                    const vote = v?.vote === "YES" ? "YES" : v?.vote === "NO" ? "NO" : null;
+                    if (!Number.isFinite(voter) || !(vote === "YES" || vote === "NO")) continue;
+                    if (!aliveSet.value.has(voter)) continue;
+                    await appendEvent({
+                        type: "MASS_ELIMINATION_VOTE",
+                        kind: "system",
+                        payload: { voterSeatNumber: voter, vote },
+                    });
+                }
+                await finalizeMassEliminationProposal();
+                return resp;
+            }
+
+            if (request.action === "ELIMINATION_SPEECH_LAST_WORDS") {
+                const say = (resp.parsed as any)?.say?.trim();
+                if (say) {
+                    await appendEvent({
+                        type: "PLAYER_SPEAK",
+                        kind: "player",
+                        payload: { seatNumber, text: say },
+                    });
+                }
+            }
+
+            if (request.action === "NIGHT_MAFIA_DISCUSSION_SPEAK") {
+                const say = (resp.parsed as any)?.say?.trim();
+                if (say) {
+                    await appendEvent({
+                        type: "PLAYER_SPEAK",
+                        kind: "player",
+                        payload: { seatNumber, text: say },
+                    });
+                }
+
+                const suggest = (resp.parsed as any)?.suggestKillSeatNumber;
+                if (
+                    typeof suggest === "number" &&
+                    Number.isInteger(suggest) &&
+                    nightKillOptions.value.some((x) => x.value === suggest)
+                ) {
+                    // Record suggestion for mafia context/logs.
+                    await appendEvent({
+                        type: "NIGHT_KILL_SUGGEST",
+                        kind: "player",
+                        payload: { seatNumber, targetSeatNumber: suggest },
+                    });
+                }
+            }
+
+            if (request.action === "NIGHT_MAFIA_BOSS_DISCUSSION_SELECT_KILL_GUESS_SHERIFF") {
+                const say = (resp.parsed as any)?.say?.trim();
+                if (say) {
+                    await appendEvent({
+                        type: "PLAYER_SPEAK",
+                        kind: "player",
+                        payload: { seatNumber, text: say },
+                    });
+                }
+
+                // Store the boss plan for later phases (kill select + boss guess),
+                // so we keep the game phases but avoid extra AI calls.
+                const selectRaw = (resp.parsed as any)?.selectKillSeatNumber;
+                const select =
+                    typeof selectRaw === "number" && Number.isInteger(selectRaw) ? (selectRaw as number) : null;
+                const guessRaw = (resp.parsed as any)?.guessSheriffSeatNumber;
+                const guess =
+                    typeof guessRaw === "number" && Number.isInteger(guessRaw) ? (guessRaw as number) : null;
+
+                const nightToken = currentPhaseToken("NIGHT_MAFIA_DISCUSSION");
+                bossNightPlan.value = {
+                    nightDiscussionPhaseToken: nightToken,
+                    bossSeatNumber: seatNumber,
+                    selectKillSeatNumber: select,
+                    guessSheriffSeatNumber: guess,
+                    consumedKill: false,
+                    consumedGuess: false,
+                };
+            }
+
+            if (request.action === "NIGHT_MAFIA_BOSS_GUESS_SHERIFF") {
+                const guess = (resp.parsed as any)?.guessSheriffSeatNumber;
+                if (
+                    typeof guess === "number" &&
+                    Number.isInteger(guess) &&
+                    aliveSet.value.has(guess) &&
+                    guess !== seatNumber
+                ) {
+                    // Mark immediately so auto-mode cannot re-trigger while the phase-advance coroutine is still running.
+                    oneShotAiDoneKeys.add(oneShotKey);
+                    // Voiced line from the boss, then perform the actual boss check.
+                    await appendEvent({
+                        type: "PLAYER_SPEAK",
+                        kind: "player",
+                        payload: { seatNumber, text: `I will check #${guess} ${seatLabel(guess)} for Sheriff.` },
+                    });
+                    await onBossGuess(guess);
+                } else {
+                    gameError.value = "Boss guess must be an alive seat number and not yourself.";
+                }
+            }
+
+            if (request.action === "NIGHT_SHERIFF_INVESTIGATE") {
+                const target = (resp.parsed as any)?.investigateSeatNumber;
+                if (
+                    typeof target === "number" &&
+                    Number.isInteger(target) &&
+                    aliveSet.value.has(target) &&
+                    target !== seatNumber
+                ) {
+                    // Mark immediately so auto-mode cannot re-trigger while the night-resolution coroutine is still running.
+                    oneShotAiDoneKeys.add(oneShotKey);
+                    // Voiced line from the sheriff, then perform the investigation (host reveals result and advances to morning).
+                    await appendEvent({
+                        type: "PLAYER_SPEAK",
+                        kind: "player",
+                        payload: { seatNumber, text: `I investigate #${target} ${seatLabel(target)} tonight.` },
+                    });
+                    await onSheriffInvestigate(target);
+                } else {
+                    gameError.value = "Sheriff investigation target must be an alive seat number and not yourself.";
+                }
+            }
+
+            // After the AI has acted, advance the game appropriately.
+            // - Most phases: end the turn as usual.
+            // - Boss guess: we call onBossGuess() which already advances the phase; do NOT also end turn.
             if (
-                typeof nominate === "number" &&
-                Number.isInteger(nominate) &&
-                nominate >= 1 &&
-                nominate <= 10 &&
-                aliveSet.value.has(nominate)
+                request.action !== "NIGHT_MAFIA_BOSS_GUESS_SHERIFF" &&
+                request.action !== "NIGHT_SHERIFF_INVESTIGATE"
             ) {
-                await appendEvent({
-                    type: "PLAYER_NOMINATE",
-                    kind: "system",
-                    payload: { seatNumber, targetSeatNumber: nominate },
-                });
+                await onEndTurn();
             }
-
-            // After the AI has acted, automatically end this speaker's turn (same as clicking "Finish turn").
-            await onEndTurn();
 
             return resp;
         } catch (err: any) {
@@ -332,8 +777,6 @@ export function useGameSession(opts: {
             aiLogs.value = aiLogs.value.map((x) => (x.id === logId ? { ...x, error: message } : x));
             gameError.value = message;
             return null;
-        } finally {
-            aiBusy.value = false;
         }
     }
 
@@ -363,7 +806,10 @@ export function useGameSession(opts: {
                 gameEvents.value = [...gameEvents.value, created];
                 recomputeLoop();
             }
+            // Non-blocking bubbles (votes, etc.)
             showBubbleForEvent(created);
+            // Blocking TTS bubbles (host + player speech)
+            await maybeSpeakForEvent(created);
             return created;
         } catch (err: any) {
             gameError.value = err?.message ?? String(err);
@@ -384,6 +830,8 @@ export function useGameSession(opts: {
             gameEvents.value = [...gameEvents.value, incoming];
             recomputeLoop();
             showBubbleForEvent(incoming);
+            // Don't block the SSE handler; just queue audio playback.
+            void maybeSpeakForEvent(incoming);
         });
         es.onerror = () => {
             // keep last known state
@@ -470,45 +918,182 @@ export function useGameSession(opts: {
         bubbleBySeat.value = next;
     }
 
-    function estimateHostBubbleMs(text: string) {
-        // Simple reading-time heuristic:
-        // - base time for context switching
-        // - additional time proportional to message length
-        // - capped to avoid sluggish UI on very long texts
-        const trimmed = text.trim();
-        const chars = trimmed.length;
-        const words = trimmed ? trimmed.split(/\s+/).length : 0;
-
-        const base = 900; // ms
-        const perWord = 230; // ms
-        const perChar = 14; // ms
-
-        const ms = base + words * perWord + chars * perChar;
-        return Math.max(1400, Math.min(6500, Math.round(ms)));
+    function showBubbleHold(key: string, text: string) {
+        const until = Number.MAX_SAFE_INTEGER;
+        const next = new Map(bubbleBySeat.value);
+        next.set(key, { text, until });
+        bubbleBySeat.value = next;
     }
 
-    function enqueueHostBubble(text: string, ms?: number) {
-        hostBubbleQueue.push({ text, ms: ms ?? estimateHostBubbleMs(text) });
-        void pumpHostBubbleQueue();
+    function clearBubble(key: string) {
+        if (!bubbleBySeat.value.has(key)) return;
+        const next = new Map(bubbleBySeat.value);
+        next.delete(key);
+        bubbleBySeat.value = next;
     }
 
-    async function pumpHostBubbleQueue() {
-        if (hostBubbleRunning) return;
-        const item = hostBubbleQueue.shift();
+    function hostPreset() {
+        const id = gameMeta.value?.host?.id;
+        return id ? PLAYERS_PRESET.find((p) => p.id === id) : undefined;
+    }
+
+    function seatPreset(seatNumber: number) {
+        const p = playerBySeat(seatNumber);
+        return p ? PLAYERS_PRESET.find((x) => x.id === p.id) : undefined;
+    }
+
+    function defaultTts(): TtsParams {
+        return { languageCode: "en-US", voiceName: "en-US-Standard-C", speakingRate: 1.0, pitch: 0.0 };
+    }
+
+    function ttsForKey(key: string): TtsParams {
+        if (key === "host") return hostPreset()?.tts ?? defaultTts();
+        const m = /^p(\d+)$/.exec(key);
+        const seat = m ? Number(m[1]) : NaN;
+        if (!Number.isFinite(seat)) return defaultTts();
+        return seatPreset(seat)?.tts ?? defaultTts();
+    }
+
+    function enqueueSpeech(key: string, text: string): Promise<void> {
+        return new Promise<void>((resolve) => {
+            speechQueue.push({ key, text, tts: ttsForKey(key), resolve });
+            void pumpSpeechQueue();
+        });
+    }
+
+    function skipTts() {
+        if (!currentSpeech) return;
+        try {
+            currentSpeech.controller.abort();
+        } catch {
+            // ignore
+        }
+        try {
+            if (currentSpeech.audio) {
+                currentSpeech.audio.pause();
+                currentSpeech.audio.currentTime = 0;
+            }
+        } catch {
+            // ignore
+        }
+        try {
+            if (currentSpeech.url) URL.revokeObjectURL(currentSpeech.url);
+        } catch {
+            // ignore
+        }
+        currentSpeech.finish();
+    }
+
+    async function pumpSpeechQueue() {
+        if (speechRunning) return;
+        const item = speechQueue.shift();
         if (!item) return;
-        hostBubbleRunning = true;
 
-        // If host sends many messages quickly, don't make players read stale bubbles for minutes.
-        // Speed up playback as the backlog grows (but keep a readable minimum time per bubble).
-        const backlog = hostBubbleQueue.length;
-        const speedup = Math.min(4, 1 + backlog * 0.25); // 0 backlog => 1x, 4 backlog => 2x, 12 backlog => 4x (cap)
-        const effectiveMs = Math.max(900, Math.round(item.ms / speedup));
+        speechRunning = true;
+        ttsBusy.value = true;
+        ttsNowKey.value = item.key;
 
-        showBubble("host", item.text, effectiveMs);
-        window.setTimeout(() => {
-            hostBubbleRunning = false;
-            void pumpHostBubbleQueue();
-        }, effectiveMs + 50);
+        showBubbleHold(item.key, item.text);
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            clearBubble(item.key);
+            ttsNowKey.value = null;
+            ttsBusy.value = false;
+            currentSpeech = null;
+            speechRunning = false;
+            item.resolve();
+            void pumpSpeechQueue();
+        };
+
+        const controller = new AbortController();
+        currentSpeech = { key: item.key, controller, audio: null, url: null, finish };
+
+        try {
+            // Prefetch the next speaker's AI while the current speaker's audio plays.
+            // We already have the current speech appended to the logs, so this is safe and makes autoplay seamless.
+            if (autoMode.value) {
+                const phase = loopState.value.phaseId;
+                const currentSeat = loopState.value.currentSpeakerSeatNumber;
+
+                // While the host is speaking, preload the AI response for whoever is about to act next.
+                if (item.key === "host") {
+                    startPrefetchForSeat(currentSeat);
+                }
+
+                // While a player is speaking, preload the next player's AI (phase-specific).
+                if (item.key === `p${currentSeat}`) {
+                    if (phase === "DAY_DISCUSSION") {
+                        const nextSeat = nextAliveSeatAfter(currentSeat);
+                        if (nextSeat != null) startPrefetchForSeat(nextSeat);
+                    } else if (phase === "NIGHT_MAFIA_DISCUSSION") {
+                        const mafia = bossLastOrder(mafiaSeatNumbers.value);
+                        const i = mafia.indexOf(currentSeat);
+                        const nextSeat = i >= 0 ? mafia[i + 1] : null;
+                        if (nextSeat != null) startPrefetchForSeat(nextSeat);
+                    } else if (phase === "ELIMINATION_SPEECH") {
+                        const q = eliminationQueue.value;
+                        const i = q.indexOf(currentSeat);
+                        const nextSeat = i >= 0 ? q[i + 1] : null;
+                        if (nextSeat != null) startPrefetchForSeat(nextSeat);
+                    }
+                }
+            }
+
+            const res = await fetch(`${apiBase}/tts/speak`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    text: item.text,
+                    languageCode: item.tts.languageCode,
+                    voiceName: item.tts.voiceName,
+                    speakingRate: item.tts.speakingRate,
+                    pitch: item.tts.pitch,
+                }),
+                signal: controller.signal,
+            });
+            if (!res.ok) {
+                const msg = await res.text().catch(() => "");
+                throw new Error(msg || `HTTP ${res.status}`);
+            }
+            const buf = await res.arrayBuffer();
+
+            const blob = new Blob([buf], { type: "audio/mpeg" });
+            const url = URL.createObjectURL(blob);
+            currentSpeech.url = url;
+
+            const audio = new Audio(url);
+            currentSpeech.audio = audio;
+
+            audio.onended = () => {
+                try {
+                    URL.revokeObjectURL(url);
+                } catch {
+                    // ignore
+                }
+                finish();
+            };
+            audio.onerror = () => {
+                try {
+                    URL.revokeObjectURL(url);
+                } catch {
+                    // ignore
+                }
+                finish();
+            };
+
+            await audio.play();
+        } catch (e: any) {
+            if (e?.name === "AbortError") {
+                finish();
+                return;
+            }
+            // Fall back to timed bubble (never deadlock gameplay on TTS issues).
+            const ms = Math.max(900, Math.min(6000, 800 + item.text.length * 12));
+            window.setTimeout(() => finish(), ms);
+        }
     }
 
     async function announceDayDiscussionStart() {
@@ -521,19 +1106,50 @@ export function useGameSession(opts: {
         await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { tag: "DISCUSSION_START", text } });
     }
 
-    function showBubbleForEvent(ev: ApiGameEvent) {
+    async function maybeSpeakForEvent(ev: ApiGameEvent): Promise<void> {
+        if (!ev) return;
+
         if (ev.type === "HOST_MESSAGE") {
             const text = String(ev.payload?.text ?? "").trim();
-            if (text) enqueueHostBubble(text);
+            if (!text) return;
+            const existing = speechPromiseByEventId.get(ev.id);
+            if (existing) {
+                await existing;
+                return;
+            }
+            const p = enqueueSpeech("host", text);
+            speechPromiseByEventId.set(ev.id, p);
+            try {
+                await p;
+            } finally {
+                speechPromiseByEventId.delete(ev.id);
+            }
             return;
         }
 
         if (ev.type === "PLAYER_SPEAK") {
             const seat = Number(ev.payload?.seatNumber);
             const text = String(ev.payload?.text ?? "").trim();
-            if (Number.isFinite(seat) && text) showBubble(`p${seat}`, text);
+            if (!Number.isFinite(seat) || !text) return;
+            const existing = speechPromiseByEventId.get(ev.id);
+            if (existing) {
+                await existing;
+                return;
+            }
+            const p = enqueueSpeech(`p${seat}`, text);
+            speechPromiseByEventId.set(ev.id, p);
+            try {
+                await p;
+            } finally {
+                speechPromiseByEventId.delete(ev.id);
+            }
             return;
         }
+    }
+
+    function showBubbleForEvent(ev: ApiGameEvent) {
+        // Speech bubbles are handled by TTS pipeline (host + player speak).
+        if (ev.type === "HOST_MESSAGE" || ev.type === "PLAYER_SPEAK") return;
 
         if (ev.type === "PLAYER_VOTE") {
             const voter = Number(ev.payload?.voterSeatNumber);
@@ -555,10 +1171,11 @@ export function useGameSession(opts: {
         }
     }
 
-    function onSpeak() {
+    async function onSpeak() {
+        if (ttsBusy.value) return;
         const text = speakDraft.value.trim();
         if (!text) return;
-        void appendEvent({
+        await appendEvent({
             type: "PLAYER_SPEAK",
             kind: "player",
             payload: { seatNumber: loopState.value.currentSpeakerSeatNumber, text },
@@ -566,10 +1183,11 @@ export function useGameSession(opts: {
         speakDraft.value = "";
     }
 
-    function onNominate() {
+    async function onNominate() {
+        if (ttsBusy.value) return;
         const n = Number.parseInt(nominateDraft.value, 10);
         if (!Number.isInteger(n)) return;
-        void appendEvent({
+        await appendEvent({
             type: "PLAYER_NOMINATE",
             kind: "system",
             payload: { seatNumber: loopState.value.currentSpeakerSeatNumber, targetSeatNumber: n },
@@ -604,6 +1222,7 @@ export function useGameSession(opts: {
     }
 
     async function onVote() {
+        if (ttsBusy.value) return;
         const phase = loopState.value.phaseId;
         if (!(phase === "DAY_VOTING" || phase === "TIE_REVOTE")) return;
         if (voteSelection.value == null) return;
@@ -636,6 +1255,7 @@ export function useGameSession(opts: {
 
     async function onVoteTurnEnded() {
         const phase = loopState.value.phaseId;
+        if (!(phase === "DAY_VOTING" || phase === "TIE_REVOTE")) return;
         const voter = loopState.value.currentSpeakerSeatNumber;
         await appendEvent({ type: "TURN_ENDED", kind: "system", payload: { seatNumber: voter } });
 
@@ -648,7 +1268,10 @@ export function useGameSession(opts: {
             await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: `Seat #${next}, please vote.` } });
             return;
         }
+        await finalizeVotingPhase(phase);
+    }
 
+    async function finalizeVotingPhase(phase: "DAY_VOTING" | "TIE_REVOTE") {
         const candidates = phase === "DAY_VOTING" ? nominees.value : tieCandidates.value;
         const votes = votesInCurrentPhase();
         const counts = new Map<number, number>();
@@ -659,6 +1282,9 @@ export function useGameSession(opts: {
 
         const tallyLines = candidates.map((c) => `${seatLabel(c)}: ${counts.get(c) ?? 0}`).join(", ");
         await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: `Vote tally: ${tallyLines}.` } });
+
+        // Keep the vote badges visible for a moment for viewers.
+        await new Promise<void>((r) => window.setTimeout(r, 1400));
 
         const max = Math.max(...candidates.map((c) => counts.get(c) ?? 0));
         const top = candidates.filter((c) => (counts.get(c) ?? 0) === max);
@@ -689,10 +1315,6 @@ export function useGameSession(opts: {
         }
 
         const names = top.map((c) => seatLabel(c)).join(", ");
-
-        // Tie handling differs by phase:
-        // - DAY_VOTING tie → TIE_DISCUSSION (candidates speak) → TIE_REVOTE
-        // - TIE_REVOTE tie → MASS_ELIMINATION_PROPOSAL (YES/NO to eliminate all tied candidates)
         if (phase === "DAY_VOTING") {
             await appendEvent({
                 type: "HOST_MESSAGE",
@@ -730,10 +1352,76 @@ export function useGameSession(opts: {
             kind: "host",
             payload: { text: `Seat #${firstVoter}, vote YES/NO.` },
         });
-        return;
+    }
+
+    async function finalizeMassEliminationProposal() {
+        const alive = aliveSeatNumbers.value;
+        const votes = massVotesInCurrentPhase();
+        let yes = 0;
+        for (const v of votes.values()) if (v === "YES") yes++;
+        const no = alive.length - yes;
+
+        await appendEvent({
+            type: "HOST_MESSAGE",
+            kind: "host",
+            payload: { text: `Mass elimination votes: YES ${yes}, NO ${no}.` },
+        });
+
+        // Keep the vote badges visible for a moment for viewers.
+        await new Promise<void>((r) => window.setTimeout(r, 1400));
+
+        const candidates = tieCandidates.value;
+        if (yes > alive.length / 2) {
+            const names = candidates.map((n) => seatLabel(n)).join(", ");
+            await appendEvent({
+                type: "HOST_MESSAGE",
+                kind: "host",
+                payload: { text: `Majority YES. Eliminating: ${names}.` },
+            });
+            for (const c of candidates) {
+                await appendEvent({
+                    type: "PLAYER_ELIMINATED",
+                    kind: "system",
+                    payload: { seatNumber: c, reason: "MASS_ELIMINATION" },
+                });
+            }
+            const first = candidates[0];
+            await appendEvent({
+                type: "PHASE_CHANGED",
+                kind: "system",
+                payload: { from: "MASS_ELIMINATION_PROPOSAL", to: "ELIMINATION_SPEECH", eliminated: candidates },
+            });
+            await appendEvent({
+                type: "HOST_MESSAGE",
+                kind: "host",
+                payload: { text: `Final words: ${seatLabel(first)}.` },
+            });
+            return;
+        }
+
+        await appendEvent({
+            type: "HOST_MESSAGE",
+            kind: "host",
+            payload: { text: "Majority NO. No one is eliminated. Night falls." },
+        });
+        await appendEvent({
+            type: "NIGHT_STARTED",
+            kind: "system",
+            payload: { dayNumber: loopState.value.dayNumber },
+        });
+        const mafia = bossLastOrder(mafiaSeatNumbers.value);
+        await appendEvent({
+            type: "PHASE_CHANGED",
+            kind: "system",
+            payload: { from: "MASS_ELIMINATION_PROPOSAL", to: "NIGHT_MAFIA_DISCUSSION", speakers: mafia },
+        });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "The town goes to sleep. Night begins." } });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Mafia are awake." } });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Mafia need to decide who to kill." } });
     }
 
     async function onProposalVote() {
+        if (ttsBusy.value) return;
         if (loopState.value.phaseId !== "MASS_ELIMINATION_PROPOSAL") return;
         if (!yesNoSelection.value) return;
         const voter = loopState.value.currentSpeakerSeatNumber;
@@ -793,13 +1481,20 @@ export function useGameSession(opts: {
             kind: "host",
             payload: { text: "Majority NO. No one is eliminated. Night falls." },
         });
-        const mafia = mafiaSeatNumbers.value;
+        await appendEvent({
+            type: "NIGHT_STARTED",
+            kind: "system",
+            payload: { dayNumber: loopState.value.dayNumber },
+        });
+        const mafia = bossLastOrder(mafiaSeatNumbers.value);
         await appendEvent({
             type: "PHASE_CHANGED",
             kind: "system",
             payload: { from: "MASS_ELIMINATION_PROPOSAL", to: "NIGHT_MAFIA_DISCUSSION", speakers: mafia },
         });
-        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Mafia wake up." } });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "The town goes to sleep. Night begins." } });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Mafia are awake." } });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Mafia need to decide who to kill." } });
     }
 
     function nightKillSelectedTarget(): number | null {
@@ -819,6 +1514,15 @@ export function useGameSession(opts: {
         const kill = nightKillSelectedTarget();
         const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
 
+        // Ensure everyone is visually asleep right before morning reveal.
+        if (nightPhase !== "NIGHT_SLEEP") {
+            await appendEvent({
+                type: "PHASE_CHANGED",
+                kind: "system",
+                payload: { from: nightPhase, to: "NIGHT_SLEEP" },
+            });
+        }
+
         // 1) Host wake-up line (still night visuals)
         await appendEvent({
             type: "HOST_MESSAGE",
@@ -831,12 +1535,18 @@ export function useGameSession(opts: {
         await appendEvent({
             type: "PHASE_CHANGED",
             kind: "system",
-            payload: { from: nightPhase, to: "MORNING_REVEAL" },
+            payload: { from: "NIGHT_SLEEP", to: "MORNING_REVEAL" },
         });
+        await appendEvent({ type: "NIGHT_ENDED", kind: "system", payload: { dayNumber: loopState.value.dayNumber } });
         await sleep(750);
 
         // 3) Announce outcome, then transition to next phase.
         if (kill != null && aliveSet.value.has(kill)) {
+            await appendEvent({
+                type: "NIGHT_RESULT",
+                kind: "system",
+                payload: { killedSeatNumber: kill },
+            });
             await appendEvent({
                 type: "HOST_MESSAGE",
                 kind: "host",
@@ -861,6 +1571,11 @@ export function useGameSession(opts: {
             return;
         }
 
+        await appendEvent({
+            type: "NIGHT_RESULT",
+            kind: "system",
+            payload: { killedSeatNumber: null },
+        });
         await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "No one was killed tonight." } });
         await sleep(650);
         await appendEvent({
@@ -959,6 +1674,7 @@ export function useGameSession(opts: {
                     : `${seatLabel(targetSeatNumber)} is NOT the Sheriff.`,
             },
         });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Boss goes back to sleep." } });
 
         const sheriff = sheriffSeatNumber.value;
         if (sheriff == null) {
@@ -973,7 +1689,7 @@ export function useGameSession(opts: {
         await appendEvent({
             type: "HOST_MESSAGE",
             kind: "host",
-            payload: { text: `${seatLabel(sheriff)} (Sheriff) is awake. Choose someone to investigate.` },
+            payload: { text: "Sheriff is awake. Choose someone to investigate." },
         });
     }
 
@@ -995,6 +1711,8 @@ export function useGameSession(opts: {
                 text: isMafia ? `${seatLabel(targetSeatNumber)} is MAFIA.` : `${seatLabel(targetSeatNumber)} is TOWN.`,
             },
         });
+        await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Sheriff goes back to sleep." } });
+        await appendEvent({ type: "PHASE_CHANGED", kind: "system", payload: { from: "NIGHT_SHERIFF_ACTION", to: "NIGHT_SLEEP" } });
         await resolveNightAndStartDay();
     }
 
@@ -1011,6 +1729,8 @@ export function useGameSession(opts: {
     function defaultPhasePayload(to: LocalPhaseId) {
         const from = loopState.value.phaseId;
         if (to === "NIGHT_MAFIA_DISCUSSION") return { from, to, speakers: bossLastOrder(mafiaSeatNumbers.value) };
+        if (to === "NIGHT_MAFIA_KILL_SELECT")
+            return { from, to, speakers: actingBossSeatNumber.value != null ? [actingBossSeatNumber.value] : [] };
         if (to === "NIGHT_MAFIA_BOSS_GUESS")
             return { from, to, speakers: bossSeatNumber.value != null ? [bossSeatNumber.value] : [] };
         if (to === "NIGHT_SHERIFF_ACTION")
@@ -1054,6 +1774,7 @@ export function useGameSession(opts: {
     }
 
     async function onEndTurn() {
+        if (ttsBusy.value) return;
         const seat = loopState.value.currentSpeakerSeatNumber;
         await appendEvent({ type: "TURN_ENDED", kind: "system", payload: { seatNumber: seat } });
 
@@ -1080,7 +1801,12 @@ export function useGameSession(opts: {
                     kind: "host",
                     payload: { text: "No one was nominated today. Moving to the night phase." },
                 });
-                const mafia = mafiaSeatNumbers.value;
+                await appendEvent({
+                    type: "NIGHT_STARTED",
+                    kind: "system",
+                    payload: { dayNumber: loopState.value.dayNumber },
+                });
+                const mafia = bossLastOrder(mafiaSeatNumbers.value);
                 await appendEvent({
                     type: "PHASE_CHANGED",
                     kind: "system",
@@ -1089,7 +1815,17 @@ export function useGameSession(opts: {
                 await appendEvent({
                     type: "HOST_MESSAGE",
                     kind: "host",
-                    payload: { text: "Night falls. Mafia wake up." },
+                    payload: { text: "The town goes to sleep. Night begins." },
+                });
+                await appendEvent({
+                    type: "HOST_MESSAGE",
+                    kind: "host",
+                    payload: { text: "Mafia are awake." },
+                });
+                await appendEvent({
+                    type: "HOST_MESSAGE",
+                    kind: "host",
+                    payload: { text: "Mafia need to decide who to kill." },
                 });
                 return;
             }
@@ -1215,30 +1951,30 @@ export function useGameSession(opts: {
                 return;
             }
 
-            const mafia = [...mafiaSeatNumbers.value].sort((a, b) => a - b);
-            const boss = bossSeatNumber.value;
-            if (boss != null) {
-                const i = mafia.indexOf(boss);
-                if (i >= 0) mafia.splice(i, 1);
-                mafia.push(boss);
-            }
+            const mafia = bossLastOrder(mafiaSeatNumbers.value);
             await appendEvent({
                 type: "PHASE_CHANGED",
                 kind: "system",
                 payload: { from: "WIN_CHECK", to: "NIGHT_MAFIA_DISCUSSION", speakers: mafia },
             });
-            await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Night falls. Mafia wake up." } });
+            await appendEvent({
+                type: "NIGHT_STARTED",
+                kind: "system",
+                payload: { dayNumber: loopState.value.dayNumber },
+            });
+            await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "The town goes to sleep. Night begins." } });
+            await appendEvent({
+                type: "HOST_MESSAGE",
+                kind: "host",
+                payload: { text: "Mafia are awake." },
+            });
+            await appendEvent({ type: "HOST_MESSAGE", kind: "host", payload: { text: "Mafia need to decide who to kill." } });
             return;
         }
 
         if (phase === "NIGHT_MAFIA_DISCUSSION") {
-            const mafia = [...mafiaSeatNumbers.value].sort((a, b) => a - b);
+            const mafia = bossLastOrder(mafiaSeatNumbers.value);
             const boss = bossSeatNumber.value;
-            if (boss != null) {
-                const i = mafia.indexOf(boss);
-                if (i >= 0) mafia.splice(i, 1);
-                mafia.push(boss);
-            }
             const idx = mafia.indexOf(seat);
             const isLast = idx === mafia.length - 1;
             if (!isLast) {
@@ -1251,36 +1987,40 @@ export function useGameSession(opts: {
                 return;
             }
 
-            // Boss check is ONLY available if the real boss is alive.
-            if (boss != null) {
-                await appendEvent({
-                    type: "PHASE_CHANGED",
-                    kind: "system",
-                    payload: { from: "NIGHT_MAFIA_DISCUSSION", to: "NIGHT_MAFIA_BOSS_GUESS", speakers: [boss] },
-                });
-                await appendEvent({
-                    type: "HOST_MESSAGE",
-                    kind: "host",
-                    payload: { text: `${seatLabel(boss)} (boss) is awake. Choose someone to check for Sheriff.` },
-                });
-                return;
-            }
-
-            // If boss is dead, skip boss-check entirely; proceed to sheriff (if alive) or morning.
-            const sheriff = sheriffSeatNumber.value;
-            if (sheriff == null) {
+            // Proceed to explicit kill-select phase (boss only), then boss-check phase, then sheriff.
+            const actingBoss = actingBossSeatNumber.value;
+            if (actingBoss == null) {
                 await resolveNightAndStartDay();
                 return;
             }
             await appendEvent({
                 type: "PHASE_CHANGED",
                 kind: "system",
-                payload: { from: "NIGHT_MAFIA_DISCUSSION", to: "NIGHT_SHERIFF_ACTION", speakers: [sheriff] },
+                payload: { from: "NIGHT_MAFIA_DISCUSSION", to: "NIGHT_MAFIA_KILL_SELECT", speakers: [actingBoss] },
             });
             await appendEvent({
                 type: "HOST_MESSAGE",
                 kind: "host",
-                payload: { text: `${seatLabel(sheriff)} (Sheriff) is awake. Choose someone to investigate.` },
+                payload: { text: "Kill selection phase. Boss is awake." },
+            });
+            return;
+        }
+
+        if (phase === "NIGHT_MAFIA_KILL_SELECT") {
+            const boss = actingBossSeatNumber.value;
+            if (boss == null) {
+                await resolveNightAndStartDay();
+                return;
+            }
+            await appendEvent({
+                type: "PHASE_CHANGED",
+                kind: "system",
+                payload: { from: "NIGHT_MAFIA_KILL_SELECT", to: "NIGHT_MAFIA_BOSS_GUESS", speakers: [boss] },
+            });
+            await appendEvent({
+                type: "HOST_MESSAGE",
+                kind: "host",
+                payload: { text: "Boss is awake. Choose someone to check for Sheriff." },
             });
             return;
         }
@@ -1299,7 +2039,7 @@ export function useGameSession(opts: {
             await appendEvent({
                 type: "HOST_MESSAGE",
                 kind: "host",
-                payload: { text: `${seatLabel(sheriff)} (Sheriff) is awake. Choose someone to investigate.` },
+            payload: { text: "Sheriff is awake. Choose someone to investigate." },
             });
             return;
         }
@@ -1356,6 +2096,58 @@ export function useGameSession(opts: {
         return () => window.clearInterval(id);
     });
 
+        // Autoplay: when enabled, advance the game automatically by calling AI for the current speaker.
+        // Supported phases (AI-wired): DAY_DISCUSSION, DAY_VOTING, TIE_REVOTE, MASS_ELIMINATION_PROPOSAL, ELIMINATION_SPEECH, NIGHT_MAFIA_DISCUSSION, NIGHT_MAFIA_KILL_SELECT, NIGHT_MAFIA_BOSS_GUESS, NIGHT_SHERIFF_ACTION.
+    let autoTimer: number | null = null;
+    onMounted(() => {
+        watch(
+            [
+                autoMode,
+                () => loopState.value.phaseId,
+                () => loopState.value.currentSpeakerSeatNumber,
+                () => Boolean(gameMeta.value?.endedAt),
+                ttsBusy,
+                aiBusy,
+            ],
+            () => {
+                if (autoTimer != null) {
+                    window.clearTimeout(autoTimer);
+                    autoTimer = null;
+                }
+                if (!autoMode.value) return;
+                if (!gameMeta.value || gameMeta.value.endedAt) return;
+                if (
+                    !(
+                        loopState.value.phaseId === "DAY_DISCUSSION" ||
+                        loopState.value.phaseId === "DAY_VOTING" ||
+                        loopState.value.phaseId === "TIE_REVOTE" ||
+                        loopState.value.phaseId === "MASS_ELIMINATION_PROPOSAL" ||
+                        loopState.value.phaseId === "ELIMINATION_SPEECH" ||
+                        loopState.value.phaseId === "NIGHT_MAFIA_DISCUSSION" ||
+                        loopState.value.phaseId === "NIGHT_MAFIA_KILL_SELECT" ||
+                        loopState.value.phaseId === "NIGHT_MAFIA_BOSS_GUESS" ||
+                        loopState.value.phaseId === "NIGHT_SHERIFF_ACTION"
+                    )
+                )
+                    return;
+                if (ttsBusy.value) return;
+                if (aiBusy.value) return;
+
+                // Small pacing delay between turns for readability.
+                autoTimer = window.setTimeout(() => {
+                    autoTimer = null;
+                    if (!autoMode.value) return;
+                    if (ttsBusy.value || aiBusy.value) return;
+                    void requestAi();
+                }, 450);
+            },
+            { immediate: true }
+        );
+    });
+    onBeforeUnmount(() => {
+        if (autoTimer != null) window.clearTimeout(autoTimer);
+    });
+
     return {
         // state
         gameMeta,
@@ -1369,6 +2161,11 @@ export function useGameSession(opts: {
         voteSelection,
         yesNoSelection,
         bubbleBySeat,
+        ttsBusy,
+        ttsNowKey,
+        autoMode,
+        aiPrefetchSeatNumber,
+        aiPrefetchBusy,
         devPhaseTo,
 
         // derived
@@ -1412,5 +2209,6 @@ export function useGameSession(opts: {
         requestAi,
         aiLogs,
         aiBusy,
+        skipTts,
     };
 }

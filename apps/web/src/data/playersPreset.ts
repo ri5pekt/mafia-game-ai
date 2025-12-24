@@ -6,9 +6,63 @@ export type PlayerPreset = {
     nickname: string;
     avatar: string;
     profile: string;
+    tts: {
+        languageCode: string;
+        voiceName: string;
+        speakingRate: number;
+        pitch: number;
+    };
 };
 
-export const PLAYERS_PRESET: PlayerPreset[] = [
+type PresetBase = Omit<PlayerPreset, "tts">;
+
+// en-US Standard voices are gendered (per Google's metadata).
+// Keep assignments consistent with character gender to avoid jarring mismatches.
+const EN_US_STANDARD_MALE = [
+    "en-US-Standard-A",
+    "en-US-Standard-B",
+    "en-US-Standard-D",
+    "en-US-Standard-I",
+    "en-US-Standard-J",
+] as const;
+const EN_US_STANDARD_FEMALE = [
+    "en-US-Standard-C",
+    "en-US-Standard-E",
+    "en-US-Standard-F",
+    "en-US-Standard-G",
+    "en-US-Standard-H",
+] as const;
+const EN_US_STANDARD_ALL = [...EN_US_STANDARD_MALE, ...EN_US_STANDARD_FEMALE] as const;
+
+function clamp(n: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, n));
+}
+
+function makeTts(p: PresetBase, idx: number): PlayerPreset["tts"] {
+    const voicePool =
+        p.gender === "male" ? EN_US_STANDARD_MALE : p.gender === "female" ? EN_US_STANDARD_FEMALE : EN_US_STANDARD_ALL;
+    const voiceName = voicePool[idx % voicePool.length];
+    const languageCode = "en-US";
+
+    // Spread pacing a bit; keep in a natural range.
+    // 0.85..1.15
+    const speakingRate = clamp(1.0 + ((idx % 9) - 4) * 0.025, 0.85, 1.15);
+
+    // Gender-ish pitch baseline with per-character variation.
+    const basePitch = p.gender === "male" ? -3.0 : p.gender === "female" ? 2.0 : 0.0;
+    const variance = ((idx % 11) - 5) * 0.55; // ~-2.75..+3.3
+    let pitch = clamp(basePitch + variance, -8.0, 8.0);
+
+    // Hosts: a touch slower / more “authoritative”.
+    if (p.role === "host") {
+        pitch = clamp(pitch - 0.8, -8.0, 8.0);
+        return { languageCode, voiceName, speakingRate: clamp(speakingRate - 0.04, 0.85, 1.15), pitch };
+    }
+
+    return { languageCode, voiceName, speakingRate, pitch };
+}
+
+const PRESET_BASE: PresetBase[] = [
     {
         id: "host_1",
         role: "host",
@@ -329,6 +383,11 @@ export const PLAYERS_PRESET: PlayerPreset[] = [
         profile: "Age 26, acting coach. Adapts personality to the room, reflects others back at them.",
     },
 ];
+
+export const PLAYERS_PRESET: PlayerPreset[] = PRESET_BASE.map((p, idx) => ({
+    ...p,
+    tts: makeTts(p, idx),
+}));
 
 export function getPlayerAvatarUrl(avatarFilename: string): string {
     return new URL(`../assets/images/players/${avatarFilename}`, import.meta.url).href;

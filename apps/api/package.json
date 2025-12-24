@@ -8,6 +8,7 @@
         "start": "node dist/main.js"
     },
     "dependencies": {
+        "@google-cloud/text-to-speech": "^6.4.0",
         "@nestjs/common": "^11.0.0",
         "@nestjs/core": "^11.0.0",
         "@nestjs/platform-express": "^11.0.0",

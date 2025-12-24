@@ -2,7 +2,16 @@ import type { ApiGameEvent, ApiGameMeta, ApiHostRef, ApiPlayerRef } from "./type
 
 export const DEFAULT_API_BASE = "http://localhost:3000";
 
-export type AiActionKind = "DAY_DISCUSSION_SPEAK";
+export type AiActionKind =
+    | "DAY_DISCUSSION_SPEAK"
+    | "DAY_VOTING_DECIDE_ALL"
+    | "TIE_REVOTE_DECIDE_ALL"
+    | "MASS_ELIMINATION_PROPOSAL_DECIDE_ALL"
+    | "ELIMINATION_SPEECH_LAST_WORDS"
+    | "NIGHT_MAFIA_DISCUSSION_SPEAK"
+    | "NIGHT_MAFIA_BOSS_DISCUSSION_SELECT_KILL_GUESS_SHERIFF"
+    | "NIGHT_MAFIA_BOSS_GUESS_SHERIFF"
+    | "NIGHT_SHERIFF_INVESTIGATE";
 
 export type AiActRequest = {
     model?: string;
@@ -18,14 +27,30 @@ export type AiActRequest = {
         profile?: string;
     };
     aliveSeatNumbers?: number[];
+    killTargetSeatNumbers?: number[];
+    awakeSeatNumbers?: number[];
+    investigateTargetSeatNumbers?: number[];
+    voteCandidateSeatNumbers?: number[];
 };
 
 export type AiActResponse = {
     requestId: string;
     model: string;
+    roleLogCharCount: number;
+    promptCharCount: number;
+    openaiLatencyMs: number;
     prompt: string;
     outputText: string;
-    parsed: { say: string; nominateSeatNumber: number | null } | null;
+    parsed:
+        | { say: string; nominateSeatNumber: number | null }
+        | { votes: { voterSeatNumber: number; targetSeatNumber: number }[] }
+        | { votes: { voterSeatNumber: number; vote: "YES" | "NO" }[] }
+        | { say: string }
+        | { say: string; suggestKillSeatNumber: number | null }
+        | { say: string; selectKillSeatNumber: number | null; guessSheriffSeatNumber: number }
+        | { guessSheriffSeatNumber: number }
+        | { investigateSeatNumber: number }
+        | null;
     parseError?: string;
     openaiRequest?: any;
     openaiResponse?: any;

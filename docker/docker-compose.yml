@@ -31,8 +31,12 @@ services:
             REDIS_URL: "redis://redis:6379"
             OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
             OPENAI_MODEL: "${OPENAI_MODEL:-}"
+            GOOGLE_APPLICATION_CREDENTIALS: "/workspace/keys/text-to-speech-482217-e40b71648ac4.json"
         ports:
             - "3000:3000"
+        volumes:
+            - "../keys:/workspace/keys:ro"
+            - "../apps/api/src/modules/ai/system-prompt.md:/workspace/apps/api/src/modules/ai/system-prompt.md:ro"
         depends_on:
             - postgres
             - redis

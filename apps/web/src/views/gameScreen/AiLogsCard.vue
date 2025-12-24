@@ -43,12 +43,20 @@
                                             • seat #{{ entry.request?.persona?.seatNumber }}
                                         </span>
                                         <span v-if="entry.request?.phaseId"> • {{ entry.request?.phaseId }}</span>
+                                        <span v-if="requestRoleLogCharCount(entry) != null">
+                                            • log {{ requestRoleLogCharCount(entry) }} chars
+                                        </span>
                                     </span>
                                     <span class="aiEntryMeta">id: {{ entry.id }}</span>
                                 </div>
 
                                 <div class="aiBlock aiReq">
-                                    <div class="aiBlockTitle">OpenAI request</div>
+                                    <div class="aiBlockTitle">
+                                        OpenAI request
+                                        <span class="aiBlockMeta" v-if="entry.response?.promptCharCount != null">
+                                            • prompt {{ entry.response.promptCharCount }} chars
+                                        </span>
+                                    </div>
                                     <pre class="aiPre" v-if="entry.response?.openaiRequest">{{
                                         prettyOpenAiRequest(entry.response?.openaiRequest)
                                     }}</pre>
@@ -56,7 +64,12 @@
                                 </div>
 
                                 <div class="aiBlock aiResp" :class="{ pending: !entry.response && !entry.error }">
-                                    <div class="aiBlockTitle">OpenAI response</div>
+                                    <div class="aiBlockTitle">
+                                        OpenAI response
+                                        <span class="aiBlockMeta" v-if="entry.response?.openaiLatencyMs != null">
+                                            • {{ entry.response.openaiLatencyMs }}ms
+                                        </span>
+                                    </div>
                                     <pre class="aiPre" v-if="entry.response?.openaiResponse">{{
                                         prettyOpenAiResponse(entry.response?.openaiResponse)
                                     }}</pre>
@@ -91,6 +104,11 @@ const collapsed = defineModel<boolean>("collapsed", { default: true });
 
 function tryPick(obj: any, key: string) {
     return obj && typeof obj === "object" ? (obj as any)[key] : undefined;
+}
+
+function requestRoleLogCharCount(entry: any): number | null {
+    const s = entry?.request?.roleLogText;
+    return typeof s === "string" ? s.length : null;
 }
 
 function prettyOpenAiRequest(req: any) {
@@ -261,6 +279,11 @@ async function copy(label: string, text: string) {
     font-weight: 900;
     letter-spacing: 0.2px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.aiBlockMeta {
+    font-weight: 700;
+    opacity: 0.85;
 }
 
 .aiReq .aiBlockTitle {

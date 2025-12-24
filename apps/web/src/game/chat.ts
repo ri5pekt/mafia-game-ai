@@ -114,6 +114,27 @@ export function buildChatMessages(args: {
             };
         }
 
+        if (ev.type === "NIGHT_STARTED") {
+            const day = Number(ev.payload?.dayNumber);
+            const text = Number.isFinite(day) ? `Night started (after Day ${day}).` : "Night started.";
+            return { id: ev.id, kind: "system", sender: "SYSTEM", time: fmtTime(ev.createdAt), text };
+        }
+
+        if (ev.type === "NIGHT_ENDED") {
+            const day = Number(ev.payload?.dayNumber);
+            const text = Number.isFinite(day) ? `Night ended (Day ${day + 1} begins).` : "Night ended.";
+            return { id: ev.id, kind: "system", sender: "SYSTEM", time: fmtTime(ev.createdAt), text };
+        }
+
+        if (ev.type === "NIGHT_RESULT") {
+            const killed = ev.payload?.killedSeatNumber;
+            const text =
+                killed === null
+                    ? "Night result: no one was killed."
+                    : `${seatLabel(Number(killed))} was killed during the night.`;
+            return { id: ev.id, kind: "system", sender: "SYSTEM", time: fmtTime(ev.createdAt), text };
+        }
+
         if (ev.type === "TURN_ENDED") {
             // During voting/proposal phases, we don't want per-player "ended turn" spam in the chat.
             if (phase === "DAY_VOTING" || phase === "TIE_REVOTE" || phase === "MASS_ELIMINATION_PROPOSAL") return null;

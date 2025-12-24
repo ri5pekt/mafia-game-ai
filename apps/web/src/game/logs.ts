@@ -23,7 +23,13 @@ function phaseChangedLine(meta: ApiGameMeta | null, from: LocalPhaseId, to: Loca
         case "TIE_REVOTE":
             return "Tie revote starts.";
         case "MASS_ELIMINATION_PROPOSAL":
-            return "Mass elimination proposal vote starts.";
+            return Array.isArray(payload?.candidates) && payload.candidates.length
+                ? `Mass elimination proposal vote starts. Candidates: ${payload.candidates
+                      .map((x: any) => Number(x))
+                      .filter((n: number) => Number.isFinite(n))
+                      .map((s: number) => seatRef(meta, s))
+                      .join(", ")}.`
+                : "Mass elimination proposal vote starts.";
         case "ELIMINATION_SPEECH": {
             const eliminated = Array.isArray(payload?.eliminated)
                 ? payload.eliminated.map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
@@ -33,6 +39,8 @@ function phaseChangedLine(meta: ApiGameMeta | null, from: LocalPhaseId, to: Loca
         }
         case "NIGHT_MAFIA_DISCUSSION":
             return "Night falls. Mafia discuss.";
+        case "NIGHT_MAFIA_KILL_SELECT":
+            return "Night: boss selects kill target.";
         case "NIGHT_MAFIA_BOSS_GUESS":
             return "Night: mafia boss check starts.";
         case "NIGHT_SHERIFF_ACTION":
@@ -55,6 +63,21 @@ function formatEvent(meta: ApiGameMeta | null, ev: ApiGameEvent): string | null 
     switch (ev.type) {
         case "HOST_MESSAGE":
             return null;
+        case "NIGHT_STARTED": {
+            const day = Number(ev.payload?.dayNumber);
+            return Number.isFinite(day) ? `Night starts (after Day ${day}).` : "Night starts.";
+        }
+        case "NIGHT_ENDED": {
+            const day = Number(ev.payload?.dayNumber);
+            return Number.isFinite(day) ? `Night ends (Day ${day + 1} begins soon).` : "Night ends.";
+        }
+        case "NIGHT_RESULT": {
+            const killed = ev.payload?.killedSeatNumber;
+            if (killed === null) return "Night result: no one was killed.";
+            const who = Number(killed);
+            if (!Number.isFinite(who)) return "Night result.";
+            return `Night result: ${seatRef(meta, who)} was killed.`;
+        }
         case "PLAYER_SPEAK": {
             const seat = Number(ev.payload?.seatNumber);
             const text = String(ev.payload?.text ?? "");
@@ -130,6 +153,15 @@ function formatEvent(meta: ApiGameMeta | null, ev: ApiGameEvent): string | null 
     }
 }
 
+function formatEventAll(meta: ApiGameMeta | null, ev: ApiGameEvent): string | null {
+    if (ev.type === "HOST_MESSAGE") {
+        const text = String(ev.payload?.text ?? "").trim();
+        if (!text) return null;
+        return `HOST: ${text}`;
+    }
+    return formatEvent(meta, ev);
+}
+
 const DAY_PHASES = new Set<LocalPhaseId>([
     "DAY_DISCUSSION",
     "DAY_VOTING",
@@ -159,7 +191,9 @@ function shouldIncludeForRole(args: {
     const isHostNightResultLeak =
         ev.type === "HOST_MESSAGE" && (phaseAtEvent === "NIGHT_MAFIA_BOSS_GUESS" || phaseAtEvent === "NIGHT_SHERIFF_ACTION");
 
-    const isTownVisible = isDay && !isHostNightResultLeak && !isNightMafiaAction && !isBossCheck && !isSheriffCheck;
+    const isPublicNightMeta = ev.type === "NIGHT_STARTED" || ev.type === "NIGHT_RESULT" || ev.type === "NIGHT_ENDED";
+    const isTownVisible =
+        (isDay || isPublicNightMeta) && !isHostNightResultLeak && !isNightMafiaAction && !isBossCheck && !isSheriffCheck;
 
     if (role === "TOWN") return isTownVisible;
     if (role === "SHERIFF") return isTownVisible || isSheriffCheck;
@@ -178,7 +212,7 @@ export function buildRoleLogTexts(args: { meta: ApiGameMeta | null; events: ApiG
 
     if (!meta) {
         const empty = "No active game yet.";
-        return { town: empty, sheriff: empty, mafia: empty, boss: empty };
+        return { town: empty, sheriff: empty, mafia: empty, boss: empty, all: empty };
     }
 
     const loop = rebuildLoopStateFromEvents(events);
@@ -198,6 +232,8 @@ export function buildRoleLogTexts(args: { meta: ApiGameMeta | null; events: ApiG
         MAFIA: [...headerBase],
         MAFIA_BOSS: [...headerBase],
     };
+
+    const all: string[] = [...headerBase];
 
     let phase: LocalPhaseId = "DAY_DISCUSSION";
 
@@ -220,11 +256,24 @@ export function buildRoleLogTexts(args: { meta: ApiGameMeta | null; events: ApiG
         }
     }
 
+    // Full log includes host messages + all private actions (used for "omniscient" orchestration like bulk voting).
+    phase = "DAY_DISCUSSION";
+    for (const ev of events) {
+        if (ev.type === "PHASE_CHANGED") {
+            const to = ev.payload?.to as LocalPhaseId | undefined;
+            if (to) phase = to;
+        }
+        const line = formatEventAll(meta, ev);
+        if (!line) continue;
+        all.push(line);
+    }
+
     return {
         town: linesByRole.TOWN.join("\n"),
         sheriff: linesByRole.SHERIFF.join("\n"),
         mafia: linesByRole.MAFIA.join("\n"),
         boss: linesByRole.MAFIA_BOSS.join("\n"),
+        all: all.join("\n"),
     };
 }
 

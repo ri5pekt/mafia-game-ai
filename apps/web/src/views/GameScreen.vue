@@ -28,6 +28,12 @@
                                         <ToggleSwitch v-model="hideVisuals" />
                                     </div>
                                 </div>
+                                <div class="devLine devLineSwitch">
+                                    <span class="devK">Auto</span>
+                                    <div class="devSwitch">
+                                        <ToggleSwitch v-model="autoMode" />
+                                    </div>
+                                </div>
                                 <div class="devLine">
                                     <span class="devK">Phase</span>
                                     <span class="devV">{{ loopState.phaseId ?? "—" }}</span>
@@ -48,9 +54,18 @@
                                     <Button label="Speak" :disabled="speakDraft.trim().length === 0" @click="onSpeak" />
                                 </div>
 
-                                <div class="devRow" v-if="loopState.phaseId === 'DAY_DISCUSSION'">
+                                <div
+                                    class="devRow"
+                                    v-if="
+                                        loopState.phaseId === 'DAY_DISCUSSION' ||
+                                        loopState.phaseId === 'NIGHT_MAFIA_DISCUSSION' ||
+                                        loopState.phaseId === 'NIGHT_MAFIA_BOSS_GUESS' ||
+                                        loopState.phaseId === 'NIGHT_SHERIFF_ACTION'
+                                    "
+                                >
                                     <div class="devHint">
-                                        AI is wired for <b>DAY_DISCUSSION</b> only (speak + optional nomination).
+                                        AI is wired for <b>DAY_DISCUSSION</b>, <b>NIGHT_MAFIA_DISCUSSION</b>,
+                                        <b>NIGHT_MAFIA_BOSS_GUESS</b>, and <b>NIGHT_SHERIFF_ACTION</b>.
                                     </div>
                                     <Button
                                         label="Request AI"
@@ -179,6 +194,7 @@
                                             'TIE_REVOTE',
                                             'MASS_ELIMINATION_PROPOSAL',
                                             'NIGHT_MAFIA_DISCUSSION',
+                                            'NIGHT_MAFIA_KILL_SELECT',
                                             'NIGHT_MAFIA_BOSS_GUESS',
                                             'NIGHT_SHERIFF_ACTION',
                                             'ELIMINATION_SPEECH',
@@ -303,7 +319,10 @@
                             :is-eliminated="!s.alive"
                             :mask-photo="s.alive && isNight && !isSeatAwake(s.seatNumber)"
                             :status-icon-url="eliminationIconUrlBySeat.get(s.seatNumber)"
-                            :is-loading="aiBusy && loopState.currentSpeakerSeatNumber === s.seatNumber"
+                            :is-loading="
+                                (aiBusy && loopState.currentSpeakerSeatNumber === s.seatNumber) ||
+                                (aiPrefetchBusy && aiPrefetchSeatNumber === s.seatNumber)
+                            "
                         />
 
                         <div v-if="voteCountBySeat.get(s.seatNumber)" class="voteBadge">
@@ -312,7 +331,15 @@
                         </div>
 
                         <div v-if="bubbleBySeat.get(`p${s.seatNumber}`)" class="speechBubble">
-                            {{ bubbleBySeat.get(`p${s.seatNumber}`)?.text }}
+                            <div class="speechText">{{ bubbleBySeat.get(`p${s.seatNumber}`)?.text }}</div>
+                            <button
+                                v-if="ttsNowKey === `p${s.seatNumber}`"
+                                class="speechSkip"
+                                type="button"
+                                @click.stop="skipTts()"
+                            >
+                                Skip
+                            </button>
                         </div>
                     </div>
 
@@ -336,7 +363,15 @@
                         />
 
                         <div v-if="bubbleBySeat.get('host')" class="speechBubble">
-                            {{ bubbleBySeat.get("host")?.text }}
+                            <div class="speechText">{{ bubbleBySeat.get("host")?.text }}</div>
+                            <button
+                                v-if="ttsNowKey === 'host'"
+                                class="speechSkip"
+                                type="button"
+                                @click.stop="skipTts()"
+                            >
+                                Skip
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -533,6 +568,11 @@ const {
     voteSelection,
     yesNoSelection,
     bubbleBySeat,
+    ttsBusy,
+    ttsNowKey,
+    autoMode,
+    aiPrefetchSeatNumber,
+    aiPrefetchBusy,
     aliveSeatNumbers,
     nominees,
     tieCandidates,
@@ -566,6 +606,7 @@ const {
     requestAi,
     aiLogs,
     aiBusy,
+    skipTts,
 } = session;
 
 const roleLogs = computed(() => buildRoleLogTexts({ meta: gameMeta.value, events: gameEvents.value }));
@@ -648,8 +689,10 @@ const uiPhase = computed<UiPhase>(() => {
         case "ELIMINATION_SPEECH":
             return "DAY";
         case "NIGHT_MAFIA_DISCUSSION":
+        case "NIGHT_MAFIA_KILL_SELECT":
         case "NIGHT_MAFIA_BOSS_GUESS":
         case "NIGHT_SHERIFF_ACTION":
+        case "NIGHT_SLEEP":
             return "NIGHT";
         case "MORNING_REVEAL":
             return "DAY";
@@ -667,8 +710,10 @@ function isSeatAwake(seatNumber: number): boolean {
     const phase = loopState.value.phaseId;
     const role = roleBySeatNumber(seatNumber);
     if (phase === "NIGHT_MAFIA_DISCUSSION") return role === "MAFIA" || role === "MAFIA_BOSS";
+    if (phase === "NIGHT_MAFIA_KILL_SELECT") return seatNumber === actingBossSeatNumber.value;
     if (phase === "NIGHT_MAFIA_BOSS_GUESS") return seatNumber === actingBossSeatNumber.value;
     if (phase === "NIGHT_SHERIFF_ACTION") return role === "SHERIFF";
+    if (phase === "NIGHT_SLEEP") return false;
     return true;
 }
 
@@ -1382,7 +1427,29 @@ function useLocalStorageBool(key: string, defaultValue: boolean) {
     overflow-wrap: break-word;
     box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
     border: 1px solid rgba(0, 0, 0, 0.08);
-    pointer-events: none;
+    pointer-events: auto;
+}
+
+.speechText {
+    white-space: pre-line;
+}
+
+.speechSkip {
+    margin-top: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    background: rgba(0, 0, 0, 0.08);
+    color: rgba(0, 0, 0, 0.85);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.speechSkip:hover {
+    background: rgba(0, 0, 0, 0.12);
 }
 
 .speechBubble::after {

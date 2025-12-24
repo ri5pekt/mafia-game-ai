@@ -20,4 +20,7 @@ yarn-error.log*
 
 *.local
 
+# Google Cloud service account keys (keep local)
+keys/*.json
+
 

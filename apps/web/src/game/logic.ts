@@ -86,9 +86,12 @@ export function rebuildLoopStateFromEvents(events: ApiGameEvent[]): LocalLoopSta
     const aliveArr = Array.from(alive).sort((a, b) => a - b);
     switch (phaseId) {
       case 'DAY_DISCUSSION':
-        // Speaking order rotates by day. Day 1 starts at the lowest alive seat (usually #1),
-        // Day 2 starts at next seat, etc. (mod alive seats).
-        order = rotate(aliveArr, (dayNumber - 1) % Math.max(1, aliveArr.length));
+        // Speaking order rotates by absolute seat number (not by index in alive list).
+        // Day 1 starts at seat #1, Day 2 at seat #2, etc. If that seat is dead, start at the next alive seat.
+        // This keeps Day 2 starting at #2 even if #1 died, which is more intuitive for viewers.
+        const startSeat = ((dayNumber - 1) % 10) + 1;
+        const base = rotate(Array.from({ length: 10 }, (_, i) => i + 1), startSeat - 1);
+        order = base.filter((s) => alive.has(s));
         idx = 0;
         break;
       case 'DAY_VOTING':
@@ -98,8 +101,10 @@ export function rebuildLoopStateFromEvents(events: ApiGameEvent[]): LocalLoopSta
         idx = 0;
         break;
       case 'NIGHT_MAFIA_DISCUSSION':
+      case 'NIGHT_MAFIA_KILL_SELECT':
       case 'NIGHT_MAFIA_BOSS_GUESS':
       case 'NIGHT_SHERIFF_ACTION':
+      case 'NIGHT_SLEEP':
       case 'MORNING_REVEAL':
         order = (phaseSpeakers?.length ? [...phaseSpeakers] : aliveArr).filter((n) => alive.has(n));
         idx = 0;
