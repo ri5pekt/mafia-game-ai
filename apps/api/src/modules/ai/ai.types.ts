@@ -1,8 +1,8 @@
 export type AiActionKind =
     | "DAY_DISCUSSION_SPEAK"
-    | "DAY_VOTING_DECIDE_ALL"
-    | "TIE_REVOTE_DECIDE_ALL"
-    | "MASS_ELIMINATION_PROPOSAL_DECIDE_ALL"
+    | "DAY_VOTING_VOTE"
+    | "TIE_REVOTE_VOTE"
+    | "MASS_ELIMINATION_PROPOSAL_VOTE"
     | "ELIMINATION_SPEECH_LAST_WORDS"
     | "NIGHT_MAFIA_DISCUSSION_SPEAK"
     | "NIGHT_MAFIA_BOSS_DISCUSSION_SELECT_KILL_GUESS_SHERIFF"
@@ -86,6 +86,9 @@ export type AiVoteAll = { votes: AiVote[] };
 export type AiMassVote = { voterSeatNumber: number; vote: "YES" | "NO" };
 export type AiMassVoteAll = { votes: AiMassVote[] };
 
+export type AiVoteOne = { targetSeatNumber: number };
+export type AiMassProposalVoteOne = { vote: "YES" | "NO" };
+
 export type AiActResponse = {
     requestId: string;
     model: string;
@@ -96,8 +99,8 @@ export type AiActResponse = {
     outputText: string;
     parsed:
         | AiDayDiscussionSpeak
-        | AiVoteAll
-        | AiMassVoteAll
+        | AiVoteOne
+        | AiMassProposalVoteOne
         | AiEliminationSpeechLastWords
         | AiNightMafiaDiscussionSpeak
         | AiNightMafiaBossDiscussionSelectKillGuessSheriff

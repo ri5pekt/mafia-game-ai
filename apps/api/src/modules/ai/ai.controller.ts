@@ -1,4 +1,4 @@
-import { Body, Controller, Inject, Post } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Post } from "@nestjs/common";
 
 import type { AiActRequest } from "./ai.types";
 import { AiService } from "./ai.service";
@@ -15,5 +15,10 @@ export class AiController {
     @Post("act")
     async act(@Body() body: AiActRequest) {
         return await this.ai.act(body);
+    }
+
+    @Get("models")
+    async models() {
+        return await this.ai.listModels();
     }
 }

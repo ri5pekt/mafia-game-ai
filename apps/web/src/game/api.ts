@@ -4,9 +4,9 @@ export const DEFAULT_API_BASE = "http://localhost:3000";
 
 export type AiActionKind =
     | "DAY_DISCUSSION_SPEAK"
-    | "DAY_VOTING_DECIDE_ALL"
-    | "TIE_REVOTE_DECIDE_ALL"
-    | "MASS_ELIMINATION_PROPOSAL_DECIDE_ALL"
+    | "DAY_VOTING_VOTE"
+    | "TIE_REVOTE_VOTE"
+    | "MASS_ELIMINATION_PROPOSAL_VOTE"
     | "ELIMINATION_SPEECH_LAST_WORDS"
     | "NIGHT_MAFIA_DISCUSSION_SPEAK"
     | "NIGHT_MAFIA_BOSS_DISCUSSION_SELECT_KILL_GUESS_SHERIFF"
@@ -43,8 +43,8 @@ export type AiActResponse = {
     outputText: string;
     parsed:
         | { say: string; nominateSeatNumber: number | null }
-        | { votes: { voterSeatNumber: number; targetSeatNumber: number }[] }
-        | { votes: { voterSeatNumber: number; vote: "YES" | "NO" }[] }
+        | { targetSeatNumber: number }
+        | { vote: "YES" | "NO" }
         | { say: string }
         | { say: string; suggestKillSeatNumber: number | null }
         | { say: string; selectKillSeatNumber: number | null; guessSheriffSeatNumber: number }

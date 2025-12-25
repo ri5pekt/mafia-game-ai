@@ -7,11 +7,13 @@ import type {
     AiActRequest,
     AiDayDiscussionSpeak,
     AiEliminationSpeechLastWords,
+    AiMassProposalVoteOne,
     AiMassVoteAll,
     AiNightMafiaBossGuessSheriff,
     AiNightMafiaBossDiscussionSelectKillGuessSheriff,
     AiNightMafiaDiscussionSpeak,
     AiNightSheriffInvestigate,
+    AiVoteOne,
     AiVoteAll,
 } from "./ai.types";
 
@@ -219,6 +221,32 @@ function parseMassVoteAll(rawText: string): { parsed: AiMassVoteAll | null; erro
     }
 }
 
+function parseVoteOne(rawText: string): { parsed: AiVoteOne | null; error?: string } {
+    const candidate = extractJsonObject(rawText);
+    try {
+        const obj = JSON.parse(candidate);
+        const target = Number(obj?.targetSeatNumber);
+        if (!Number.isInteger(target) || target < 1 || target > 10) {
+            return { parsed: null, error: '"targetSeatNumber" must be an integer 1..10.' };
+        }
+        return { parsed: { targetSeatNumber: target } };
+    } catch (e: any) {
+        return { parsed: null, error: e?.message ?? String(e) };
+    }
+}
+
+function parseMassProposalVoteOne(rawText: string): { parsed: AiMassProposalVoteOne | null; error?: string } {
+    const candidate = extractJsonObject(rawText);
+    try {
+        const obj = JSON.parse(candidate);
+        const vote = obj?.vote === "YES" ? "YES" : obj?.vote === "NO" ? "NO" : null;
+        if (!(vote === "YES" || vote === "NO")) return { parsed: null, error: 'vote must be "YES" or "NO".' };
+        return { parsed: { vote } };
+    } catch (e: any) {
+        return { parsed: null, error: e?.message ?? String(e) };
+    }
+}
+
 @Injectable()
 export class AiService {
     private client: OpenAI | null = null;
@@ -236,10 +264,20 @@ export class AiService {
         return this.client;
     }
 
+    async listModels() {
+        const resp = await this.getClient().models.list();
+        const items = ((resp as any)?.data ?? []) as any[];
+        const ids = items.map((m) => String(m?.id ?? "")).filter(Boolean);
+        return { models: ids };
+    }
+
     async act(req: AiActRequest) {
         const system = loadSystemPrompt();
 
-        const model = (req.model ?? process.env.OPENAI_MODEL ?? "gpt-5-nano").trim();
+        // Treat empty strings as "not provided" so docker-compose/env defaults like OPENAI_MODEL="" don't break requests.
+        const modelFromReq = typeof req.model === "string" ? req.model.trim() : "";
+        const modelFromEnv = typeof process.env.OPENAI_MODEL === "string" ? process.env.OPENAI_MODEL.trim() : "";
+        const model = modelFromReq || modelFromEnv || "gpt-5-nano";
         if (!model) throw new BadRequestException("model is required");
 
         const persona = req.persona;
@@ -323,39 +361,30 @@ export class AiService {
             taskLines.push("Hard constraints:");
             taskLines.push("- No markdown. No explanations. Output only JSON.");
             taskLines.push('- "say" must be a single short paragraph (1-4 sentences).');
-        } else if (action === "DAY_VOTING_DECIDE_ALL" || action === "TIE_REVOTE_DECIDE_ALL") {
-            const phaseLabel = action === "DAY_VOTING_DECIDE_ALL" ? "DAY_VOTING" : "TIE_REVOTE";
-            taskLines.push("You are the game orchestrator. Decide how EVERY alive seat votes this round.");
-            taskLines.push("Use only information from the provided full log. Roles are not publicly revealed.");
-            taskLines.push("Goal: produce a realistic distribution of votes based on stated suspicions/reads, not random votes.");
+        } else if (action === "DAY_VOTING_VOTE" || action === "TIE_REVOTE_VOTE") {
+            const phaseLabel = action === "DAY_VOTING_VOTE" ? "DAY_VOTING" : "TIE_REVOTE";
+            taskLines.push("You are casting your own vote as the current persona.");
+            taskLines.push("Use only what YOU would know from your role-specific log. Roles are hidden during the game.");
             taskLines.push(`Phase: ${phaseLabel}`);
             if (voteCandidates.length) taskLines.push(`Valid vote candidates: ${voteCandidates.join(", ")}.`);
-            if (aliveList.length) taskLines.push(`Alive voters: ${aliveList.join(", ")}.`);
             taskLines.push("Rules:");
-            taskLines.push("- Every alive seat must cast exactly one vote.");
-            taskLines.push("- VoterSeatNumber must be an alive seat.");
-            taskLines.push("- TargetSeatNumber must be one of the valid candidates.");
-            taskLines.push("- Avoid unanimous votes unless the log strongly supports it.");
-            taskLines.push("- If there are 2+ candidates, your votes must include at least TWO different targets (do not hard-stack 10-0).");
+            taskLines.push("- You must vote for exactly ONE candidate.");
+            taskLines.push("- targetSeatNumber must be one of the valid candidates.");
             taskLines.push("");
             taskLines.push("Output JSON ONLY with this exact shape:");
-            taskLines.push('{"votes":[{"voterSeatNumber":1,"targetSeatNumber":2}]}');
+            taskLines.push('{"targetSeatNumber":2}');
             taskLines.push("");
             taskLines.push("Hard constraints:");
             taskLines.push("- No markdown. No explanations. Output only JSON.");
-        } else if (action === "MASS_ELIMINATION_PROPOSAL_DECIDE_ALL") {
-            taskLines.push("You are the game orchestrator. Decide how EVERY alive seat votes YES/NO on the mass elimination proposal.");
-            taskLines.push("Use only information from the provided full log. Roles are not publicly revealed.");
-            taskLines.push("Goal: produce realistic votes based on stated suspicions/reads and fear of ties.");
+        } else if (action === "MASS_ELIMINATION_PROPOSAL_VOTE") {
+            taskLines.push("You are casting your own YES/NO vote on the mass elimination proposal.");
+            taskLines.push("Use only what YOU would know from your role-specific log. Roles are hidden during the game.");
             if (voteCandidates.length) taskLines.push(`Proposal candidates (would be eliminated if YES passes): ${voteCandidates.join(", ")}.`);
-            if (aliveList.length) taskLines.push(`Alive voters: ${aliveList.join(", ")}.`);
             taskLines.push("Rules:");
-            taskLines.push("- Every alive seat must cast exactly one vote.");
-            taskLines.push('- vote must be "YES" or "NO".');
-            taskLines.push("- Avoid unanimous votes unless the log strongly supports it.");
+            taskLines.push("- You must vote exactly one of: YES or NO.");
             taskLines.push("");
             taskLines.push("Output JSON ONLY with this exact shape:");
-            taskLines.push('{"votes":[{"voterSeatNumber":1,"vote":"YES"}]}');
+            taskLines.push('{"vote":"YES"}');
             taskLines.push("");
             taskLines.push("Hard constraints:");
             taskLines.push("- No markdown. No explanations. Output only JSON.");
@@ -458,8 +487,8 @@ export class AiService {
 
         const { parsed, error } = (() => {
             if (action === "DAY_DISCUSSION_SPEAK") return parseDayDiscussionSpeak(String(outputText ?? ""));
-            if (action === "DAY_VOTING_DECIDE_ALL" || action === "TIE_REVOTE_DECIDE_ALL") return parseVoteAll(String(outputText ?? ""));
-            if (action === "MASS_ELIMINATION_PROPOSAL_DECIDE_ALL") return parseMassVoteAll(String(outputText ?? ""));
+            if (action === "DAY_VOTING_VOTE" || action === "TIE_REVOTE_VOTE") return parseVoteOne(String(outputText ?? ""));
+            if (action === "MASS_ELIMINATION_PROPOSAL_VOTE") return parseMassProposalVoteOne(String(outputText ?? ""));
             if (action === "ELIMINATION_SPEECH_LAST_WORDS") return parseEliminationSpeechLastWords(String(outputText ?? ""));
             if (action === "NIGHT_MAFIA_DISCUSSION_SPEAK") return parseNightMafiaDiscussionSpeak(String(outputText ?? ""));
             if (action === "NIGHT_MAFIA_BOSS_DISCUSSION_SELECT_KILL_GUESS_SHERIFF")
@@ -469,49 +498,17 @@ export class AiService {
             return { parsed: null, error: `Unsupported action: ${String(action)}` };
         })();
 
-        if ((action === "DAY_VOTING_DECIDE_ALL" || action === "TIE_REVOTE_DECIDE_ALL") && parsed) {
-            const votes = (parsed as any)?.votes as any[] | undefined;
-            const voters = new Set(aliveList);
+        if ((action === "DAY_VOTING_VOTE" || action === "TIE_REVOTE_VOTE") && parsed) {
+            const target = Number((parsed as any)?.targetSeatNumber);
             const candidatesSet = new Set(voteCandidates);
-            if (!Array.isArray(votes)) {
-                throw new BadRequestException("Parsed votes missing for bulk voting.");
-            }
-            const seen = new Set<number>();
-            const targets = new Set<number>();
-            for (const v of votes) {
-                const voter = Number(v?.voterSeatNumber);
-                const target = Number(v?.targetSeatNumber);
-                if (!voters.has(voter)) throw new BadRequestException(`Invalid voterSeatNumber: ${voter}`);
-                if (seen.has(voter)) throw new BadRequestException(`Duplicate voterSeatNumber: ${voter}`);
-                if (voteCandidates.length && !candidatesSet.has(target))
-                    throw new BadRequestException(`Invalid targetSeatNumber: ${target}`);
-                seen.add(voter);
-                targets.add(target);
-            }
-            if (seen.size !== voters.size)
-                throw new BadRequestException(`Missing votes. Expected ${voters.size}, got ${seen.size}.`);
-            if (voteCandidates.length >= 2 && targets.size < 2) {
-                throw new BadRequestException("Votes must include at least two different targets when 2+ candidates exist.");
+            if (voteCandidates.length && !candidatesSet.has(target)) {
+                throw new BadRequestException(`Invalid targetSeatNumber: ${target}`);
             }
         }
 
-        if (action === "MASS_ELIMINATION_PROPOSAL_DECIDE_ALL" && parsed) {
-            const votes = (parsed as any)?.votes as any[] | undefined;
-            const voters = new Set(aliveList);
-            if (!Array.isArray(votes)) {
-                throw new BadRequestException("Parsed votes missing for mass elimination.");
-            }
-            const seen = new Set<number>();
-            for (const v of votes) {
-                const voter = Number(v?.voterSeatNumber);
-                const vote = v?.vote;
-                if (!voters.has(voter)) throw new BadRequestException(`Invalid voterSeatNumber: ${voter}`);
-                if (seen.has(voter)) throw new BadRequestException(`Duplicate voterSeatNumber: ${voter}`);
-                if (!(vote === "YES" || vote === "NO")) throw new BadRequestException(`Invalid vote for ${voter}`);
-                seen.add(voter);
-            }
-            if (seen.size !== voters.size)
-                throw new BadRequestException(`Missing votes. Expected ${voters.size}, got ${seen.size}.`);
+        if (action === "MASS_ELIMINATION_PROPOSAL_VOTE" && parsed) {
+            const vote = (parsed as any)?.vote;
+            if (!(vote === "YES" || vote === "NO")) throw new BadRequestException("Invalid vote");
         }
 
         return {

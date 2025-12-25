@@ -35,6 +35,11 @@ type CreatePayload = {
 export function useGameSession(opts: {
     apiBase?: string;
     onEnded?: () => void;
+    /**
+     * Optional selected model to send to the backend for OpenAI calls.
+     * Return empty string to omit the model field and let the API decide a default.
+     */
+    aiModel?: () => string;
     createPayload: () => CreatePayload;
     lobbySeatLines: () => string[];
 }) {
@@ -304,11 +309,11 @@ export function useGameSession(opts: {
             phaseId === "DAY_DISCUSSION"
                 ? ("DAY_DISCUSSION_SPEAK" as const)
                 : phaseId === "DAY_VOTING"
-                ? ("DAY_VOTING_DECIDE_ALL" as const)
+                ? ("DAY_VOTING_VOTE" as const)
                 : phaseId === "TIE_REVOTE"
-                ? ("TIE_REVOTE_DECIDE_ALL" as const)
+                ? ("TIE_REVOTE_VOTE" as const)
             : phaseId === "MASS_ELIMINATION_PROPOSAL"
-                ? ("MASS_ELIMINATION_PROPOSAL_DECIDE_ALL" as const)
+                ? ("MASS_ELIMINATION_PROPOSAL_VOTE" as const)
                 : phaseId === "ELIMINATION_SPEECH"
                 ? ("ELIMINATION_SPEECH_LAST_WORDS" as const)
                 : phaseId === "NIGHT_MAFIA_DISCUSSION"
@@ -328,13 +333,16 @@ export function useGameSession(opts: {
             phaseId === "DAY_VOTING" ? nominees.value : phaseId === "TIE_REVOTE" ? tieCandidates.value : undefined;
         const massCandidates = phaseId === "MASS_ELIMINATION_PROPOSAL" ? tieCandidates.value : undefined;
 
+        const selectedModel = (opts.aiModel ? String(opts.aiModel() ?? "") : "").trim();
+
         return {
+            ...(selectedModel ? { model: selectedModel } : {}),
             action,
             phaseId,
             gameId: g.id,
             roleLogText:
                 phaseId === "DAY_VOTING" || phaseId === "TIE_REVOTE" || phaseId === "MASS_ELIMINATION_PROPOSAL"
-                    ? roleLogs.all
+                    ? roleLogText
                     : roleLogText,
             aliveSeatNumbers: aliveSeatNumbers.value,
             killTargetSeatNumbers:
@@ -376,12 +384,14 @@ export function useGameSession(opts: {
     function buildPrefetchKey(request: any): string {
         const g = gameMeta.value;
         const gid = g?.id ?? "";
+        const selectedModel = (opts.aiModel ? String(opts.aiModel() ?? "") : "").trim();
         return [
             gid,
             String(request?.phaseId ?? ""),
             currentPhaseToken(loopState.value.phaseId),
             String(request?.action ?? ""),
             String(request?.persona?.seatNumber ?? ""),
+            selectedModel,
         ].join("|");
     }
 
@@ -598,56 +608,54 @@ export function useGameSession(opts: {
                 }
             }
 
-            if (request.action === "DAY_VOTING_DECIDE_ALL" || request.action === "TIE_REVOTE_DECIDE_ALL") {
+            if (request.action === "DAY_VOTING_VOTE" || request.action === "TIE_REVOTE_VOTE") {
                 const phase = loopState.value.phaseId;
                 if (!(phase === "DAY_VOTING" || phase === "TIE_REVOTE")) return resp;
                 const candidates = phase === "DAY_VOTING" ? nominees.value : tieCandidates.value;
 
-                const votes = (resp.parsed as any)?.votes as any[] | undefined;
-                if (!Array.isArray(votes)) {
-                    gameError.value = resp.parseError ?? "AI votes missing.";
+                const targetSeatNumber = Number((resp.parsed as any)?.targetSeatNumber);
+                if (!Number.isInteger(targetSeatNumber) || !candidates.includes(targetSeatNumber)) {
+                    gameError.value = resp.parseError ?? "AI vote missing/invalid.";
                     return resp;
                 }
 
-                // Append all votes at once (no per-seat prompts).
-                for (const v of votes) {
-                    const voter = Number(v?.voterSeatNumber);
-                    const target = Number(v?.targetSeatNumber);
-                    if (!Number.isFinite(voter) || !Number.isFinite(target)) continue;
-                    if (!aliveSet.value.has(voter)) continue;
-                    if (!candidates.includes(target)) continue;
-                    await appendEvent({
-                        type: "PLAYER_VOTE",
-                        kind: "player",
-                        payload: { voterSeatNumber: voter, targetSeatNumber: target },
-                    });
-                }
+                await appendEvent({
+                    type: "PLAYER_VOTE",
+                    kind: "player",
+                    payload: { voterSeatNumber: seatNumber, targetSeatNumber },
+                });
 
-                // Resolve immediately with a short on-screen tally pause.
-                await finalizeVotingPhase(phase);
+                // When the last voter has voted, resolve the phase.
+                const next = nextAliveSeatAfter(seatNumber);
+                if (!next) {
+                    await finalizeVotingPhase(phase);
+                } else {
+                    await onEndTurn();
+                }
                 return resp;
             }
 
-            if (request.action === "MASS_ELIMINATION_PROPOSAL_DECIDE_ALL") {
+            if (request.action === "MASS_ELIMINATION_PROPOSAL_VOTE") {
                 const phase = loopState.value.phaseId;
                 if (phase !== "MASS_ELIMINATION_PROPOSAL") return resp;
-                const votes = (resp.parsed as any)?.votes as any[] | undefined;
-                if (!Array.isArray(votes)) {
-                    gameError.value = resp.parseError ?? "AI mass votes missing.";
+                const vote = (resp.parsed as any)?.vote === "YES" ? "YES" : (resp.parsed as any)?.vote === "NO" ? "NO" : null;
+                if (!(vote === "YES" || vote === "NO")) {
+                    gameError.value = resp.parseError ?? "AI vote missing/invalid.";
                     return resp;
                 }
-                for (const v of votes) {
-                    const voter = Number(v?.voterSeatNumber);
-                    const vote = v?.vote === "YES" ? "YES" : v?.vote === "NO" ? "NO" : null;
-                    if (!Number.isFinite(voter) || !(vote === "YES" || vote === "NO")) continue;
-                    if (!aliveSet.value.has(voter)) continue;
-                    await appendEvent({
-                        type: "MASS_ELIMINATION_VOTE",
-                        kind: "system",
-                        payload: { voterSeatNumber: voter, vote },
-                    });
+
+                await appendEvent({
+                    type: "MASS_ELIMINATION_VOTE",
+                    kind: "system",
+                    payload: { voterSeatNumber: seatNumber, vote },
+                });
+
+                const next = nextAliveSeatAfter(seatNumber);
+                if (!next) {
+                    await finalizeMassEliminationProposal();
+                } else {
+                    await onEndTurn();
                 }
-                await finalizeMassEliminationProposal();
                 return resp;
             }
 

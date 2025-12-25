@@ -17,6 +17,18 @@
             <small class="hint">v1 is designed for 10 AI players + HOST.</small>
           </div>
 
+          <div class="row">
+            <label class="label" for="aiModel">AI model</label>
+            <Dropdown
+              id="aiModel"
+              v-model="modelLocal"
+              :options="modelOptions"
+              placeholder="Select model"
+            />
+            <small class="hint">Used for all AI actions once the game starts.</small>
+            <small v-if="modelLoadError" class="hint">Failed to load ai-models.txt: {{ modelLoadError }}</small>
+          </div>
+
           <Divider />
 
           <div class="row">
@@ -52,20 +64,71 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref, watch } from "vue";
 
-const emit = defineEmits<{
-  (e: 'start'): void;
+const props = defineProps<{
+  model: string;
 }>();
 
-const roomName = ref('Mafia Table');
-const playerCount = ref('10 AI players');
+const emit = defineEmits<{
+  (e: "start"): void;
+  (e: "update:model", v: string): void;
+}>();
+
+const modelOptions = ref<string[]>([]);
+const modelLoadError = ref("");
+
+function parseModelsText(text: string): string[] {
+  return String(text ?? "")
+    .split(/\r?\n/g)
+    .map((s) => s.trim())
+    .filter((s) => Boolean(s) && !s.startsWith("#"));
+}
+
+async function loadModelOptions() {
+  modelLoadError.value = "";
+  try {
+    // Served from Vite public/ so it is available at runtime without bundling.
+    const res = await fetch(`/ai-models.txt?t=${Date.now()}`, { cache: "no-store" as RequestCache });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    const parsed = parseModelsText(text);
+    modelOptions.value = parsed.length ? parsed : ["gpt-5-mini", "gpt-5-nano"];
+  } catch (e: any) {
+    modelLoadError.value = e?.message ?? String(e);
+    modelOptions.value = ["gpt-5-mini", "gpt-5-nano"];
+  }
+}
+
+const modelLocal = ref<string>(String(props.model || "gpt-5-mini"));
+
+watch(
+  () => props.model,
+  (v) => {
+    const next = String(v ?? "").trim();
+    if (next && next !== modelLocal.value) modelLocal.value = next;
+  }
+);
+
+watch(modelLocal, (v) => emit("update:model", v));
+
+watch(modelOptions, (opts) => {
+  if (!opts?.length) return;
+  if (!opts.includes(modelLocal.value)) modelLocal.value = opts[0];
+});
+
+onMounted(() => {
+  void loadModelOptions();
+});
+
+const roomName = ref("Mafia Table");
+const playerCount = ref("10 AI players");
 
 const confirmOpen = ref(false);
 
 function start() {
   confirmOpen.value = false;
-  emit('start');
+  emit("start");
 }
 </script>
 

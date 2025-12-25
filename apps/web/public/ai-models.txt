@@ -1,0 +1,6 @@
+# One OpenAI model id per line.
+# Blank lines and lines starting with # are ignored.
+gpt-5-mini
+gpt-5-nano
+gpt-5
+

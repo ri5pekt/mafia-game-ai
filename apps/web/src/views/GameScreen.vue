@@ -408,6 +408,10 @@ type CoordMap = Record<string, Coord>;
 const gameBgUrl = gameTableUrl;
 const bgOk = ref(true);
 
+const props = defineProps<{
+    aiModel?: string;
+}>();
+
 const emit = defineEmits<{
     (e: "ended"): void;
 }>();
@@ -538,6 +542,7 @@ function formatSeatLine(s: Seat): string {
 
 const session = useGameSession({
     onEnded: () => emit("ended"),
+    aiModel: () => String(props.aiModel ?? ""),
     createPayload: () => {
         const players = Array.from({ length: 10 }, (_, i) => {
             const seatNumber = i + 1;
